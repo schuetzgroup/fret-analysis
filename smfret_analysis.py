@@ -647,7 +647,8 @@ class Plotter:
                 key = k.lstrip("/")[:-4]
                 self.track_data[key] = s[k]
 
-    def plot_eff_stoi(self, frame=None, columns=2, size=5):
+    def scatter(self, xdata=("fret", "eff"), ydata=("fret", "stoi"), frame=None,
+                columns=2, size=5):
         rows = math.ceil(len(self.track_data) / columns)
         fig, ax = plt.subplots(rows, columns, figsize=(columns*size,
                                                        rows*size),
@@ -656,8 +657,8 @@ class Plotter:
         for (k, f), a in zip(self.track_data.items(), ax.T.flatten()):
             if frame is not None:
                 f = f[f["donor", "frame"] == frame]
-            x = f["fret", "eff"].values.astype(float)
-            y = f["fret", "stoi"].values.astype(float)
+            x = f[xdata].values.astype(float)
+            y = f[ydata].values.astype(float)
             m = np.isfinite(x) & np.isfinite(y)
             x = x[m]
             y = y[m]
@@ -671,11 +672,11 @@ class Plotter:
             a.axis("off")
 
         for a in ax.flatten():
-            a.set_xlabel("FRET eff")
-            a.set_ylabel("FRET stoi")
+            a.set_xlabel(" ".join(xdata))
+            a.set_ylabel(" ".join(ydata))
             a.grid()
 
-    def plot_eff_hist(self, frame=None, columns=2, size=5):
+    def hist(self, data=("fret", "eff"), frame=None, columns=2, size=5):
         rows = math.ceil(len(self.track_data) / columns)
         fig, ax = plt.subplots(rows, columns, figsize=(columns*size,
                                                        rows*size),
@@ -684,7 +685,7 @@ class Plotter:
         for (k, f), a in zip(self.track_data.items(), ax.T.flatten()):
             if frame is not None:
                 f = f[f["donor", "frame"] == frame]
-            x = f["fret", "eff"].values.astype(float)
+            x = f[data].values.astype(float)
             m = np.isfinite(x)
             x = x[m]
 
