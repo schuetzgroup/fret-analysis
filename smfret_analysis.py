@@ -548,6 +548,12 @@ class Filter:
             for key, trc in self.track_data.items():
                 s[f"{key}_trc"] = trc
 
+        with open(f"{file_prefix}-v{output_version:03}.yaml", "w") as f:
+            v = {k: float(v)
+                 for k, v in self.beam_shape.fit_result.best_values.items()}
+            io.yaml.safe_dump(dict(beam_shape_fit=v), f,
+                              default_flow_style=False)
+
     def show_raw_track(self, key):
         @ipywidgets.interact(
             particle=ipywidgets.BoundedIntText(min=0, value=0),
