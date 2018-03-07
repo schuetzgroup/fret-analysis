@@ -129,7 +129,8 @@ class Tracker:
             self.loc_data[key] = ret
 
     def track(self, feat_radius=4, bg_frame=3, link_radius=1, link_mem=1,
-              min_length=4, bg_estimator="mean"):
+              min_length=4, bg_estimator="mean",
+              image_filter=lambda i: image.gaussian_filter(i, 1)):
         num_files = sum(len(i) for i in self.img.values())
         cnt = 1
         label = ipywidgets.Label(value="Starting…")
@@ -152,7 +153,8 @@ class Tracker:
                     don_loc = self.don_roi(loc)
                     acc_loc = self.acc_roi(loc)
 
-                    img = image.gaussian_filter(img, 1)
+                    if image_filter is not None:
+                        img = image_filter(img)
 
                     # Track
                     d = fret.SmFretData.track(
