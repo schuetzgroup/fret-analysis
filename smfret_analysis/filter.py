@@ -314,12 +314,13 @@ class Filter:
         trc = self.track_data[key]
         if thresh > 0:
             trc_filtered = []
-            for f in np.unique(trc.index.levels[0]):
+            files = np.unique(trc.index.levels[0])
+            for f in files:
                 with pims.open(f) as fr:
                     r = get_cell_region(self.don_roi(fr[0]), thresh)
-                trc_filtered.append(select_donor_region(trc, r))
+                trc_filtered.append(select_donor_region(trc.loc[f], r))
 
-            self.track_data[key] = pd.concat(trc_filtered)
+            self.track_data[key] = pd.concat(trc_filtered, keys=files)
 
     def find_beam_shape_thresh(self):
         tw = ipywidgets.BoundedIntText(value=75, min=0, max=100)
