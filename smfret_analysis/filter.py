@@ -1,237 +1,25 @@
-import os
-import re
-import subprocess
-import tempfile
-import collections
 import contextlib
-import sys
-import warnings
 import functools
-import math
 
 import numpy as np
+from scipy import ndimage
 import pandas as pd
+import ruptures
 import ipywidgets
-from IPython.display import display
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-from scipy import ndimage
+import pims
 
 import bokeh.plotting
 import bokeh.application as b_app
 import bokeh.application.handlers as b_hnd
 bokeh.plotting.output_notebook(bokeh.resources.INLINE)
 
-ruptures_path = "/home/lukas/Software/ruptures/"
-if ruptures_path not in sys.path:
-    sys.path.insert(1, ruptures_path)
-import ruptures
+from sdt import io, roi, fret, chromatic, beam_shape
 
-import sdt
-from sdt import roi, io, chromatic, image, fret, beam_shape
-from sdt.loc import daostorm_3d
-from sdt.plot import density_scatter
-from micro_helpers import pims
+from .version import output_version
 
 
-__version__ = "1.0.dev"
-output_version = 6
-
-
-def print_info():
-    print(f"""Skript version {__version__}
-Output version {output_version}
-Using sdt-python version {sdt.__version__}""")
-
-
-def get_files(subdir, pattern):
-    r = re.compile(pattern)
-    flist = []
-    idlist = []
-    for dp, dn, fn in os.walk(subdir):
-        for f in fn:
-            relp = os.path.relpath(os.path.join(dp, f), subdir)
-            m = r.fullmatch(relp)
-            if m is None:
-                continue
-            flist.append(os.path.join(dp, f))
-            ids = []
-            for i in m.groups():
-                try:
-                    ids.append(int(i))
-                except ValueError:
-                    try:
-                        ids.append(float(i))
-                    except ValueError:
-                        ids.append(i)
-            idlist.append(ids)
-    slist = sorted(zip(flist, idlist), key=lambda x: x[0])
-    return [s[0] for s in slist], [s[1] for s in slist]
-
-
-class Tracker:
-    def __init__(self, don_o, acc_o, size, ex_scheme="da"):
-        self.don_roi = roi.ROI(don_o, (don_o[0] + size[0], don_o[1] + size[1]))
-        self.acc_roi = roi.ROI(acc_o, (acc_o[0] + size[0], acc_o[1] + size[1]))
-        self.ana = fret.SmFretAnalyzer(ex_scheme)
-        self.img = {}
-        self.loc_data = {}
-        self.track_data = {}
-
-    def make_cc(self, path, files_re, loc=True, plot=True, params={}):
-        bead_files, _ = get_files(path, files_re)
-
-        if loc:
-            subprocess.run(["python", "-m", "sdt.gui.locator"] + bead_files)
-
-        bead_loc = [io.load(os.path.splitext(f)[0]+".h5") for f in bead_files]
-        acc_beads = [self.acc_roi(l) for l in bead_loc]
-        don_beads = [self.don_roi(l) for l in bead_loc]
-        # things below assume that first channel is donor, second is acceptor
-        cc = chromatic.Corrector(don_beads, acc_beads)
-        cc.determine_parameters(**params)
-        cc.save("chromatic.npz")
-
-        if plot:
-            cc.test()
-
-        self.cc = cc
-
-    def add_dataset(self, key, path, files_re):
-        self.img[key] = get_files(path, files_re)[0]
-
-    def donor_sum(self, fr):
-        fr = self.ana.get_excitation_type(fr, "d")
-        fr_d = self.don_roi(fr)
-        fr_a = self.acc_roi(fr)
-        return [a + self.cc(d, channel=1, cval=d.mean())
-                for d, a in zip(fr_d, fr_a)]
-
-    def set_loc_options(self, key, idx):
-        i_name = self.img[key][idx]
-        with pims.open(i_name) as fr:
-            fr = fr[1:-1]
-            with tempfile.NamedTemporaryFile(suffix=".tif") as t:
-                io.save_as_tiff(self.donor_sum(fr), t.name)
-                subprocess.run(["python", "-m", "sdt.gui.locator", t.name])
-            with tempfile.NamedTemporaryFile(suffix=".tif") as t:
-                i = self.ana.get_excitation_type(fr, "a")
-                io.save_as_tiff(self.acc_roi(i), t.name)
-                subprocess.run(["python", "-m", "sdt.gui.locator", t.name])
-
-    def locate(self):
-        num_files = sum(len(i) for i in self.img.values())
-        cnt = 1
-        label = ipywidgets.Label(value="Starting…")
-        display(label)
-
-        for key, files in self.img.items():
-            ret = []
-            for i, f in enumerate(files):
-                label.value = f"Locating {f} ({cnt}/{num_files})"
-                cnt += 1
-
-                subdir = os.path.dirname(f)
-                with open(os.path.join(subdir, "loc-options-a.yaml")) as lo:
-                    opts_a = io.yaml.load(lo)["options"]
-                with open(os.path.join(subdir, "loc-options-d.yaml")) as lo:
-                    opts_d = io.yaml.load(lo)["options"]
-
-                with pims.open(f) as fr:
-                    fr = fr[1:-1]
-                    overlay = self.donor_sum(fr)
-                    for o in overlay:
-                        o[o < 1] = 1
-                    lo_d = daostorm_3d.batch(overlay, **opts_d)
-                    acc_fr = list(self.acc_roi(
-                        self.ana.get_excitation_type(fr, "a")))
-                    for a in acc_fr:
-                        a[a < 1] = 1
-                    lo_a = daostorm_3d.batch(acc_fr, **opts_a)
-                    lo = pd.concat([lo_d, lo_a]).sort_values("frame")
-                    lo = lo.reset_index(drop=True)
-
-                    # correct for the fact that locating happend in the
-                    # acceptor ROI
-                    lo[["x", "y"]] += self.acc_roi.top_left
-                    ret.append(lo)
-            self.loc_data[key] = ret
-
-    def track(self, feat_radius=4, bg_frame=3, link_radius=1, link_mem=1,
-              min_length=4, bg_estimator="mean"):
-        num_files = sum(len(i) for i in self.img.values())
-        cnt = 1
-        label = ipywidgets.Label(value="Starting…")
-        display(label)
-
-        for key in self.img:
-            ret = []
-            for f, loc in zip(self.img[key], self.loc_data[key]):
-                label.value = f"Tracking {f} ({cnt}/{num_files})"
-                cnt += 1
-
-                with pims.open(f) as img:
-                    # First and last images are Fura, remove them
-                    loc = loc[(loc["frame"] > 0) &
-                              (loc["frame"] < len(img) - 1)]
-                    img = img[1:-1]
-                    # Correct frame number
-                    loc["frame"] -= 1
-
-                    don_loc = self.don_roi(loc)
-                    acc_loc = self.acc_roi(loc)
-
-                    img = image.gaussian_filter(img, 1)
-
-                    # Track
-                    d = fret.SmFretData.track(
-                        self.ana, self.don_roi(img),
-                        self.acc_roi(img), don_loc, acc_loc, self.cc,
-                        link_radius=link_radius, link_mem=link_mem,
-                        min_length=min_length, bg_estimator=bg_estimator,
-                        feat_radius=feat_radius, bg_frame=bg_frame,
-                        interpolate=True)
-                ret.append(d.tracks)
-            self.track_data[key] = ret
-
-    def analyze_fret(self):
-        num_files = sum(len(i) for i in self.track_data.values())
-        cnt = 1
-        label = ipywidgets.Label(value="Starting…")
-        display(label)
-
-        for key in self.img:
-            for f, t in zip(self.img[key], self.track_data[key]):
-                label.value = (f"Calculating FRET values {f} "
-                               f"({cnt}/{num_files})")
-                cnt += 1
-                self.ana.quantify_fret(t, aa_interp="linear")
-
-    def save_data(self, file_prefix="tracking"):
-        with pd.HDFStore(f"{file_prefix}-v{output_version:03}.h5") as s:
-            for key in self.img:
-                loc = pd.concat(self.loc_data[key], keys=self.img[key])
-                s[f"{key}_loc"] = loc
-
-                # Give each particle a unique ID (across files)
-                new_p = 0
-                for t in self.track_data[key]:
-                    ps = t["fret", "particle"].copy().values
-                    for p in np.unique(ps):
-                        t.loc[ps == p, ("fret", "particle")] = new_p
-                        new_p += 1
-                trc = pd.concat(self.track_data[key], keys=self.img[key])
-                s[f"{key}_trc"] = trc
-
-        rois = dict(donor=self.don_roi, acceptor=self.acc_roi)
-        top = collections.OrderedDict(rois=rois,
-                                      excitation_scheme="".join(self.ana.desc),
-                                      files=self.img)
-        with open(f"{file_prefix}-v{output_version:03}.yaml", "w") as f:
-            io.yaml.safe_dump(top, f, default_flow_style=False)
-
-
-# Filtering
 def get_cell_region(img, percentile=85):
     r = ndimage.binary_opening(img > np.percentile(img, percentile))
     return ndimage.binary_fill_holes(r)
@@ -292,6 +80,7 @@ class Filter:
 
             with contextlib.suppress(Exception):
                 cp_d = self.cp_det.fit_predict(dm, pen)
+                # FIXME: This depends on custom modifications to ruptures
                 ruptures.show.display(dm, [], cp_d, ax=ax[0], marker="x")
                 axt0 = ax[0].twinx()
                 axt0.plot(hn, c="C2", alpha=0.2)
@@ -299,6 +88,7 @@ class Filter:
 
             with contextlib.suppress(Exception):
                 cp_a = self.cp_det.fit_predict(am, pen)
+                # FIXME: This depends on custom modifications to ruptures
                 ruptures.show.display(am, [], cp_a, ax=ax[1], marker="x")
                 ruptures.show.display(ef, [], cp_a, ax=ax[2], marker="x")
                 axt1 = ax[1].twinx()
@@ -635,67 +425,3 @@ class Filter:
                         c=mpl.cm.jet(t["fret", "eff"].mean()), marker=".")
             print(t["fret", "eff"].mean())
             plt.show()
-
-
-class Plotter:
-    def __init__(self, file_prefix="filtered"):
-        self.track_data = {}
-        with pd.HDFStore(f"{file_prefix}-v{output_version:03}.h5", "r") as s:
-            for k in s.keys():
-                if not k.endswith("_trc"):
-                    continue
-                key = k.lstrip("/")[:-4]
-                self.track_data[key] = s[k]
-
-    def scatter(self, xdata=("fret", "eff"), ydata=("fret", "stoi"), frame=None,
-                columns=2, size=5):
-        rows = math.ceil(len(self.track_data) / columns)
-        fig, ax = plt.subplots(rows, columns, figsize=(columns*size,
-                                                       rows*size),
-                               sharex=True, sharey=True)
-
-        for (k, f), a in zip(self.track_data.items(), ax.T.flatten()):
-            if frame is not None:
-                f = f[f["donor", "frame"] == frame]
-            x = f[xdata].values.astype(float)
-            y = f[ydata].values.astype(float)
-            m = np.isfinite(x) & np.isfinite(y)
-            x = x[m]
-            y = y[m]
-            try:
-                density_scatter(x, y, ax=a)
-            except Exception:
-                a.scatter(x, y)
-            a.set_title(k)
-
-        for a in ax.T.flatten()[len(self.track_data):]:
-            a.axis("off")
-
-        for a in ax.flatten():
-            a.set_xlabel(" ".join(xdata))
-            a.set_ylabel(" ".join(ydata))
-            a.grid()
-
-    def hist(self, data=("fret", "eff"), frame=None, columns=2, size=5):
-        rows = math.ceil(len(self.track_data) / columns)
-        fig, ax = plt.subplots(rows, columns, figsize=(columns*size,
-                                                       rows*size),
-                               sharex=True, sharey=True)
-        b = np.linspace(-0.5, 1.5, 50)
-        for (k, f), a in zip(self.track_data.items(), ax.T.flatten()):
-            if frame is not None:
-                f = f[f["donor", "frame"] == frame]
-            x = f[data].values.astype(float)
-            m = np.isfinite(x)
-            x = x[m]
-
-            a.hist(x, b, density=False)
-            a.set_title(k)
-
-        for a in ax.T.flatten()[len(self.track_data):]:
-            a.axis("off")
-
-        for a in ax.flatten():
-            a.set_xlabel("FRET eff")
-            a.set_ylabel("# events")
-            a.grid()
