@@ -103,9 +103,9 @@ class Tracker:
                 cnt += 1
 
                 subdir = os.path.dirname(f)
-                with open(os.path.join(subdir, "loc-options-a.yaml")) as lo:
+                with open("loc-options-a.yaml") as lo:
                     opts_a = io.yaml.load(lo)["options"]
-                with open(os.path.join(subdir, "loc-options-d.yaml")) as lo:
+                with open("loc-options-d.yaml") as lo:
                     opts_d = io.yaml.load(lo)["options"]
 
                 with pims.open(f) as fr:
