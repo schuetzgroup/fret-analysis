@@ -1,5 +1,6 @@
 import contextlib
 import functools
+import warnings
 
 import numpy as np
 from scipy import ndimage
