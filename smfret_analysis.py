@@ -34,7 +34,7 @@ from sdt.plot import density_scatter
 from micro_helpers import pims
 
 
-__version__ = "1.0"
+__version__ = "1.0.dev"
 output_version = 6
 
 
