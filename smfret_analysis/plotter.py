@@ -20,7 +20,8 @@ class Plotter:
                 self.track_data[key] = s[k]
 
     def scatter(self, xdata=("fret", "eff"), ydata=("fret", "stoi"),
-                frame=None, columns=2, size=5):
+                frame=None, columns=2, size=5, xlim=(None, None),
+                ylim=(None, None)):
         rows = math.ceil(len(self.track_data) / columns)
         fig, ax = plt.subplots(rows, columns, figsize=(columns*size,
                                                        rows*size),
@@ -47,12 +48,15 @@ class Plotter:
             a.set_xlabel(" ".join(xdata))
             a.set_ylabel(" ".join(ydata))
             a.grid()
+            a.set_xlim(*xlim)
+            a.set_ylim(*ylim)
 
-    def hist(self, data=("fret", "eff"), frame=None, columns=2, size=5):
+    def hist(self, data=("fret", "eff"), frame=None, columns=2, size=5,
+             xlim=(None, None)):
         rows = math.ceil(len(self.track_data) / columns)
         fig, ax = plt.subplots(rows, columns, figsize=(columns*size,
                                                        rows*size),
-                               sharex=True, sharey=True)
+                               sharex=True)
         b = np.linspace(-0.5, 1.5, 50)
         for (k, f), a in zip(self.track_data.items(), ax.T.flatten()):
             if frame is not None:
@@ -71,4 +75,5 @@ class Plotter:
             a.set_xlabel("FRET eff")
             a.set_ylabel("# events")
             a.grid()
+            a.set_xlim(*xlim)
 
