@@ -329,9 +329,15 @@ class Filter:
             trc = self.track_data[key]
             ps = trc["fret", "particle"].unique()
             n = len(ps)
+            prog = 1
+            prog_text = ipywidgets.Label("Starting…")
+            display(prog_text)
 
             res = []
             for p in ps:
+                prog_text.value = f"Filtering particle {p} ({prog}/{n})"
+                prog += 1
+
                 trc_p = trc[trc["fret", "particle"] == p]
                 trc_p = trc_p.sort_values(("donor", "frame"))
 
