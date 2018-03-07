@@ -116,17 +116,21 @@ class Filter:
             plt.show()
 
     def filter_acc_bleach(self, cp_penalty, brightness_thresh):
+        num_p = sum(len(t["fret", "particle"].unique())
+                    for t in self.track_data.values())
+        prog = 1
+        prog_text = ipywidgets.Label("Starting…")
+        display(prog_text)
+
         for key in self.track_data:
             trc = self.track_data[key]
             ps = trc["fret", "particle"].unique()
             n = len(ps)
-            prog = 1
-            prog_text = ipywidgets.Label("Starting…")
-            display(prog_text)
 
             res = []
             for p in ps:
-                prog_text.value = f"Filtering particle {p} ({prog}/{n})"
+                prog_text.value = (f"Filtering '{key}' particle "
+                                   f"{p} ({prog}/{num_p})")
                 prog += 1
 
                 trc_p = trc[trc["fret", "particle"] == p]
