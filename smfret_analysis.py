@@ -492,7 +492,8 @@ class Filter:
                 mask &= (trc["fret", "has_neighbor"] == 0)
 
             trc = trc[mask]
-            good_p = trc["fret", "particle"].unique()
+            good_p = trc.loc[trc["donor", "frame"] == 0,
+                             ("fret", "particle")].unique()
 
             self.track_data[key] = trc[trc["fret", "particle"].isin(good_p)]
 
