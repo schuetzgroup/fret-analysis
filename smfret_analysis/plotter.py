@@ -51,6 +51,8 @@ class Plotter:
             a.set_xlim(*xlim)
             a.set_ylim(*ylim)
 
+        fig.tight_layout()
+
     def hist(self, data=("fret", "eff"), frame=None, columns=2, size=5,
              xlim=(None, None)):
         rows = math.ceil(len(self.track_data) / columns)
@@ -76,4 +78,6 @@ class Plotter:
             a.set_ylabel("# events")
             a.grid()
             a.set_xlim(*xlim)
+
+        fig.tight_layout()
 
