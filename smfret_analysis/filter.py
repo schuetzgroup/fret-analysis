@@ -36,7 +36,7 @@ def select_donor_region(fret_data, region):
 
 
 class Filter:
-    def __init__(self, file_prefix="tracking"):
+    def __init__(self, file_prefix="tracking", beam_shape_keys="all"):
         with open(f"{file_prefix}-v{output_version:03}.yaml") as f:
             tracking_meta = io.yaml.safe_load(f)
 
@@ -53,16 +53,19 @@ class Filter:
         self.cp_det = ruptures.Pelt("l2", min_size=1, jump=1)
         self.cp = {}
 
-        self.calc_donor_beamshape()
+        if beam_shape_keys == "all":
+            beam_shape_keys = self.track_data.keys()
+        self.calc_donor_beamshape(beam_shape_keys)
 
-    def calc_donor_beamshape(self):
+    def calc_donor_beamshape(self, keys, weighted=True):
         img_shape = (self.don_roi.bottom_right[1] - self.don_roi.top_left[1],
                      self.don_roi.bottom_right[0] - self.don_roi.top_left[0])
-        data = list(self.track_data.values())
+        data = [v for k, v in self.track_data.items() if k in keys]
         data = [d[d["donor", "frame"] == 0] for d in data]
         self.beam_shape = beam_shape.Corrector(
             *data, pos_columns=[("donor", "x"), ("donor", "y")],
-            mass_column=("fret", "d_mass"), shape=img_shape)
+            mass_column=("fret", "d_mass"), shape=img_shape,
+            density_weight=weighted)
 
     def find_acc_bleach_options(self, key):
         @ipywidgets.interact(p=ipywidgets.IntText(0),
