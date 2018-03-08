@@ -355,7 +355,7 @@ class Filter:
 
     def show_raw_track(self, key):
         @ipywidgets.interact(
-            particle=ipywidgets.BoundedIntText(min=0, value=0),
+            particle=ipywidgets.IntText(value=0),
             eff_thresh=ipywidgets.BoundedFloatText(min=0, max=1, value=0.6),
             frame=ipywidgets.IntText(value=0))
         def show_track(particle, frame, eff_thresh):
