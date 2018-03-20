@@ -49,13 +49,16 @@ class Tracker:
         self.loc_data = {}
         self.track_data = {}
 
-    def make_cc(self, path, files_re, loc=True, plot=True, params={}):
+    def make_cc(self, path, files_re, loc=True, plot=True, max_frame=None,
+                params={}):
         bead_files, _ = get_files(path, files_re)
 
         if loc:
             subprocess.run(["python", "-m", "sdt.gui.locator"] + bead_files)
 
         bead_loc = [io.load(os.path.splitext(f)[0]+".h5") for f in bead_files]
+        if max_frame is not None:
+            bead_loc = [b[b["frame"] <= max_frame] for b in bead_loc]
         acc_beads = [self.acc_roi(l) for l in bead_loc]
         don_beads = [self.don_roi(l) for l in bead_loc]
         # things below assume that first channel is donor, second is acceptor
