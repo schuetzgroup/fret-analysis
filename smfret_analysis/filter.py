@@ -5,7 +5,6 @@ import warnings
 import numpy as np
 from scipy import ndimage
 import pandas as pd
-import ruptures
 import ipywidgets
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -16,7 +15,7 @@ import bokeh.application as b_app
 import bokeh.application.handlers as b_hnd
 bokeh.plotting.output_notebook(bokeh.resources.INLINE)
 
-from sdt import io, roi, fret, chromatic, beam_shape
+from sdt import io, roi, fret, chromatic, beam_shape, changepoint, helper
 
 from .version import output_version
 
@@ -50,7 +49,7 @@ class Filter:
         with pd.HDFStore(f"{file_prefix}-v{output_version:03}.h5", "r") as s:
             self.track_data = {k: s[f"{k}_trc"] for k in self.img}
 
-        self.cp_det = ruptures.Pelt("l2", min_size=1, jump=1)
+        self.cp_det = changepoint.Pelt("l2", min_size=1, jump=1)
         self.cp = {}
 
         if beam_shape_keys == "all":
@@ -82,22 +81,13 @@ class Filter:
             ef = t["fret", "eff"].values
             hn = t["fret", "has_neighbor"].values
 
-            with contextlib.suppress(Exception):
-                cp_d = self.cp_det.fit_predict(dm, pen)
-                # FIXME: This depends on custom modifications to ruptures
-                ruptures.show.display(dm, [], cp_d, ax=ax[0], marker="x")
-                axt0 = ax[0].twinx()
-                axt0.plot(hn, c="C2", alpha=0.2)
-                axt0.set_ylim(-0.05, 1.05)
-
-            with contextlib.suppress(Exception):
-                cp_a = self.cp_det.fit_predict(am, pen)
-                # FIXME: This depends on custom modifications to ruptures
-                ruptures.show.display(am, [], cp_a, ax=ax[1], marker="x")
-                ruptures.show.display(ef, [], cp_a, ax=ax[2], marker="x")
-                axt1 = ax[1].twinx()
-                axt1.plot(hn, c="C2", alpha=0.2)
-                axt1.set_ylim(-0.05, 1.05)
+            cp_a = self.cp_det.find_changepoints(am, pen)
+            changepoint.plot_changepoints(dm, cp_a, ax=ax[0])
+            changepoint.plot_changepoints(am, cp_a, ax=ax[1])
+            changepoint.plot_changepoints(ef, cp_a, ax=ax[2])
+            axt1 = ax[1].twinx()
+            axt1.plot(hn, c="C2", alpha=0.2)
+            axt1.set_ylim(-0.05, 1.05)
 
             #c, s = steps[p]
             #c = fs[c]
@@ -121,55 +111,56 @@ class Filter:
     def filter_acc_bleach(self, cp_penalty, brightness_thresh):
         num_p = sum(len(t["fret", "particle"].unique())
                     for t in self.track_data.values())
-        prog = 1
         prog_text = ipywidgets.Label("Starting…")
         display(prog_text)
+        prog = 0
+        show_prog = 0
 
         for key in self.track_data:
             trc = self.track_data[key]
-            ps = trc["fret", "particle"].unique()
-            n = len(ps)
+            trc = trc.sort_values([("fret", "particle"), ("donor", "frame")])
+            trc_split = helper.split_dataframe(
+                trc, ("fret", "particle"),
+                [("fret", "a_mass"), ("donor", "frame"), ("fret", "exc_type")],
+                type="array", sort=False)
 
-            res = []
-            for p in ps:
-                prog_text.value = (f"Filtering '{key}' particle "
-                                   f"{p} ({prog}/{num_p})")
+            good = np.zeros(len(trc), dtype=bool)
+            good_pos = 0
+            for p, trc_p in trc_split:
+                if prog >= show_prog:
+                    prog_text.value = (f"Filtering '{key}' particles "
+                                       f"({prog}/{num_p})")
+                    show_prog += 1000
                 prog += 1
 
-                trc_p = trc[trc["fret", "particle"] == p]
-                trc_p = trc_p.sort_values(("donor", "frame"))
+                good_slice = slice(good_pos, good_pos + len(trc_p))
+                good_pos += len(trc_p)
 
-                m = self.ana.get_excitation_type(trc_p, "d")
-                m_a = m["fret", "a_mass"].values
-                f_a = m["donor", "frame"].values
+                acc_mask = trc_p[:, 2] == 0
+                m_a = trc_p[acc_mask, 0]
+                f_a = trc_p[acc_mask, 1]
 
-                # Find changepoints
-                try:
-                    cp = self.cp_det.fit_predict(m_a, cp_penalty)
-                except Exception as e:
+                # Find changepoints if there are no NaNs
+                if np.any(~np.isfinite(m_a)):
                     continue
-
-                if len(cp) and cp[-1] == len(m):
-                    cp.pop(-1)
+                cp = self.cp_det.find_changepoints(m_a, cp_penalty)
                 if not len(cp):
                     continue
 
                 # Make step function
-                s = np.split(m_a, cp)
+                s = np.array_split(m_a, cp)
                 s = [np.median(s_) for s_ in s]
 
                 # See if only the first step is above brightness_thresh
                 if not all(s_ < brightness_thresh for s_ in s[1:]):
                     continue
 
-                # Remove data after bleach step
-                res.append(
-                    trc_p[trc_p["donor", "frame"] < f_a[max(0, cp[0] - 1)]])
+                # Add data before bleach step
+                good[good_slice] = trc_p[:, 1] < f_a[max(0, cp[0] - 1)]
 
-            if len(res):
-                self.track_data[key] = pd.concat(res)
-            else:
-                self.track_data[key] = trc.iloc[:0].copy()
+            self.track_data[key] = trc[good]
+
+        prog_text.value = "Done."
 
     def find_brightness_params(self, key):
         dat = self.track_data[key]
