@@ -1,6 +1,7 @@
 import contextlib
 import functools
 import warnings
+import collections
 
 import numpy as np
 from scipy import ndimage
@@ -25,54 +26,80 @@ def get_cell_region(img, percentile=85):
     return ndimage.binary_fill_holes(r)
 
 
-def select_donor_region(fret_data, region):
-    xy = fret_data.loc[:, [("donor", "x"), ("donor", "y")]].values
-    x, y = xy.astype(int).T
-    in_bounds = ((x >= 0) & (y >= 0) &
-                 (x < region.shape[1]) & (y < region.shape[0]))
-    fret_data = fret_data[in_bounds]
-    return fret_data[region[y[in_bounds], x[in_bounds]]]
-
-
-class Filter:
-    def __init__(self, file_prefix="tracking", beam_shape_keys="all"):
-        with open(f"{file_prefix}-v{output_version:03}.yaml") as f:
+class SmFretFilterUi:
+    def __init__(self, file_prefix="tracking"):
+        with open("{}-v{:03}.yaml".format(file_prefix, output_version)) as f:
             tracking_meta = io.yaml.safe_load(f)
 
-        self.don_roi = tracking_meta["rois"]["donor"]
-        self.acc_roi = tracking_meta["rois"]["acceptor"]
+        self.rois = {k: tracking_meta["rois"][k]
+                     for k in ("donor", "acceptor")}
 
-        self.img = tracking_meta["files"]
-        self.cc = chromatic.Corrector.load("chromatic.npz")
-        self.ana = fret.SmFretAnalyzer(tracking_meta["excitation_scheme"])
+        cn = "{}-v{:03}_chromatic.npz".format(file_prefix, output_version)
+        self.cc = chromatic.Corrector.load(cn)
 
-        with pd.HDFStore(f"{file_prefix}-v{output_version:03}.h5", "r") as s:
-            self.track_data = {k: s[f"{k}_trc"] for k in self.img}
+        with pd.HDFStore("{}-v{:03}.h5".format(file_prefix, output_version,
+                                               "r")) as s:
+            self.track_filters = collections.OrderedDict(
+                [(k[1:-4], fret.SmFretFilter(s[k])) for k in s.keys()
+                 if k.endswith("_trc")])
 
-        self.cp_det = changepoint.Pelt("l2", min_size=1, jump=1)
-        self.cp = {}
+        self.beam_shapes = {"donor": None, "acceptor": None}
+        self.excitation_scheme = tracking_meta["excitation_scheme"]
 
-        if beam_shape_keys == "all":
-            beam_shape_keys = self.track_data.keys()
-        self.calc_donor_beamshape(beam_shape_keys)
+    def calc_beam_shape_sm(self, keys="all", channel="donor", weighted=True):
+        if not len(keys):
+            return
 
-    def calc_donor_beamshape(self, keys, weighted=True):
-        img_shape = (self.don_roi.bottom_right[1] - self.don_roi.top_left[1],
-                     self.don_roi.bottom_right[0] - self.don_roi.top_left[0])
-        data = [v for k, v in self.track_data.items() if k in keys]
-        data = [d[d["donor", "frame"] == 0] for d in data]
-        self.beam_shape = beam_shape.Corrector(
-            *data, pos_columns=[("donor", "x"), ("donor", "y")],
-            mass_column=("fret", "d_mass"), shape=img_shape,
+        if channel.startswith("d"):
+            k = "donor"
+            mk = "d_mass"
+            f = self.excitation_scheme.find("d")
+        elif channel.startswith("a"):
+            k = "acceptor"
+            mk = "a_mass"
+            f = self.excitation_scheme.find("a")
+        else:
+            raise ValueError("Channel must be \"donor\" or \"acceptor\".")
+
+        r = self.rois[k]
+
+        if keys == "all":
+            keys = self.track_filters.keys()
+
+        img_shape = (r.bottom_right[1] - r.top_left[1],
+                     r.bottom_right[0] - r.top_left[0])
+        data = [v.tracks_orig for k, v in self.track_filters.items()
+                if k in keys]
+        data = [d[(d[k, "frame"] == f) & (d["fret", "interp"] == 0) &
+                  (d["fret", "has_neighbor"] == 0)]
+                for d in data]
+        bs = beam_shape.Corrector(
+            *data, pos_columns=[(k, "x"), (k, "y")],
+            mass_column=("fret", mk), shape=img_shape,
             density_weight=weighted)
+
+        self.beam_shapes[k] = bs
+
+    def calc_beam_shape_bulk(self, files, channel="donor", gaussian_fit=True,
+                             frame=0):
+        imgs = []
+        roi = self.rois[channel]
+
+        for f in files:
+            with pims.open(f) as fr:
+                imgs.append(roi(f[frame]))
+
+        self.beam_shapes[channel] = beam_shape.Corrector(
+            imgs, gaussian_fit=gaussian_fit)
 
     def find_acc_bleach_options(self, key):
         @ipywidgets.interact(p=ipywidgets.IntText(0),
                              pen=ipywidgets.FloatText(1e6))
         def show_track(p, pen):
-            t = self.track_data[key]
+            f = self.track_filters[key]
+            t = f.tracks
             t = t[t["fret", "particle"] == p]
-            t = self.ana.get_excitation_type(t, "d")
+            t = t[t["fret", "exc_type"] == fret.excitation_type_nums["d"]]
 
             fig, ax = plt.subplots(1, 3, figsize=(12, 4))
             fs = t["donor", "frame"].values
@@ -81,7 +108,7 @@ class Filter:
             ef = t["fret", "eff"].values
             hn = t["fret", "has_neighbor"].values
 
-            cp_a = self.cp_det.find_changepoints(am, pen)
+            cp_a = f.cp_detector.find_changepoints(am, pen)
             changepoint.plot_changepoints(dm, cp_a, ax=ax[0])
             changepoint.plot_changepoints(am, cp_a, ax=ax[1])
             changepoint.plot_changepoints(ef, cp_a, ax=ax[2])
@@ -89,15 +116,6 @@ class Filter:
             axt1.plot(hn, c="C2", alpha=0.2)
             axt1.set_ylim(-0.05, 1.05)
 
-            #c, s = steps[p]
-            #c = fs[c]
-            #c = [fs.min()] + c.tolist() + [fs.max()]
-            #s = [s[0]] + s
-            #ax[1].plot(fs, am)
-            #ax[1].step(c, s, c="C3")
-            #axt1 = ax[1].twinx()
-            #axt1.set_ylim(-0.05, 1.05)
-            #axt1.plot(fs, hn, c="C2", alpha=0.2)
             ax[0].set_title("d_mass")
             ax[1].set_title("a_mass")
             ax[2].set_title("eff")
@@ -109,63 +127,14 @@ class Filter:
             plt.show()
 
     def filter_acc_bleach(self, cp_penalty, brightness_thresh):
-        num_p = sum(len(t["fret", "particle"].unique())
-                    for t in self.track_data.values())
-        prog_text = ipywidgets.Label("Starting…")
-        display(prog_text)
-        prog = 0
-        show_prog = 0
-
-        for key in self.track_data:
-            trc = self.track_data[key]
-            trc = trc.sort_values([("fret", "particle"), ("donor", "frame")])
-            trc_split = helper.split_dataframe(
-                trc, ("fret", "particle"),
-                [("fret", "a_mass"), ("donor", "frame"), ("fret", "exc_type")],
-                type="array", sort=False)
-
-            good = np.zeros(len(trc), dtype=bool)
-            good_pos = 0
-            for p, trc_p in trc_split:
-                if prog >= show_prog:
-                    prog_text.value = (f"Filtering '{key}' particles "
-                                       f"({prog}/{num_p})")
-                    show_prog += 1000
-                prog += 1
-
-                good_slice = slice(good_pos, good_pos + len(trc_p))
-                good_pos += len(trc_p)
-
-                acc_mask = trc_p[:, 2] == 0
-                m_a = trc_p[acc_mask, 0]
-                f_a = trc_p[acc_mask, 1]
-
-                # Find changepoints if there are no NaNs
-                if np.any(~np.isfinite(m_a)):
-                    continue
-                cp = self.cp_det.find_changepoints(m_a, cp_penalty)
-                if not len(cp):
-                    continue
-
-                # Make step function
-                s = np.array_split(m_a, cp)
-                s = [np.median(s_) for s_ in s]
-
-                # See if only the first step is above brightness_thresh
-                if not all(s_ < brightness_thresh for s_ in s[1:]):
-                    continue
-
-                # Add data before bleach step
-                good[good_slice] = trc_p[:, 1] < f_a[max(0, cp[0] - 1)]
-
-            self.track_data[key] = trc[good]
-
-        prog_text.value = "Done."
+        for f in self.track_filters.values():
+            f.find_acceptor_bleach(cp_penalty, brightness_thresh,
+                                   truncate=True)
 
     def find_brightness_params(self, key):
-        dat = self.track_data[key]
-        dat0 = dat[(dat["fret", "has_neighbor"] == 0) &
-                   (dat["donor", "frame"] == 0)]
+        dat = self.track_filters[key].tracks
+        dat0 = dat[(dat["fret", "has_neighbor"] == 1) &
+                   (dat["donor", "frame"] == self.excitation_scheme.find("d"))]
 
         ds = bokeh.models.ColumnDataSource(dat0)
         ds.data["file"] = [i[0] for i in ds.data["index"]]
@@ -258,44 +227,28 @@ class Filter:
 
         bokeh.plotting.show(app)
 
-    def filter_brightness(self, d_mass=(-np.inf, np.inf),
-                          a_mass=(-np.inf, np.inf), stoi=(-np.inf, np.inf),
-                          filter_neighbors=True):
-        for key in self.track_data:
-            trc = self.track_data[key]
+    def query(self, expr, mi_sep="_"):
+        for f in self.track_filters.values():
+            f.query(expr, mi_sep)
 
-            if not len(trc):
-                continue
-
-            mask = [
-                trc["fret", "d_mass"] > d_mass[0],
-                trc["fret", "d_mass"] < d_mass[1],
-                trc["fret", "a_mass"] > a_mass[0],
-                trc["fret", "a_mass"] < a_mass[1],
-                trc["fret", "stoi"] > stoi[0],
-                trc["fret", "stoi"] < stoi[1]
-            ]
-            mask = functools.reduce(np.bitwise_and, mask)
-
-            if filter_neighbors:
-                mask &= (trc["fret", "has_neighbor"] == 0)
-
-            trc = trc[mask]
-            good_p = trc.loc[trc["donor", "frame"] == 0,
-                             ("fret", "particle")].unique()
-
-            self.track_data[key] = trc[trc["fret", "particle"].isin(good_p)]
+    def load_cell_mask(self, file, percentile, return_img=False):
+        frame_no = self.excitation_scheme.find("o")
+        with pims.open(file) as fr:
+            img = self.rois["donor"](fr[frame_no])
+        mask = get_cell_region(img, percentile)
+        if return_img:
+            return mask, img
+        else:
+            return mask
 
     def find_cell_thresh(self, key):
         fw = ipywidgets.Dropdown(
-            options=self.track_data[key].index.levels[0].unique())
+            options=self.track_filters[key].tracks.index.levels[0].unique())
         pw = ipywidgets.BoundedIntText(value=85, min=0, max=100)
 
         @ipywidgets.interact(file=fw, percentile=pw)
         def show_cell(file, percentile):
-            with pims.open(file) as fr:
-                img = self.don_roi(fr[0])
-            mask = get_cell_region(img, percentile)
+            mask, img = self.load_cell_mask(file, percentile, return_img=True)
 
             fig, (ax1, ax2) = plt.subplots(1, 2)
             ax1.imshow(img)
@@ -304,44 +257,54 @@ class Filter:
             fig.tight_layout()
             plt.show()
 
-    def filter_cell_region(self, key, thresh):
-        trc = self.track_data[key]
-        if thresh > 0:
-            trc_filtered = []
-            files = np.unique(trc.index.levels[0])
-            for f in files:
-                with pims.open(f) as fr:
-                    r = get_cell_region(self.don_roi(fr[0]), thresh)
-                trc_filtered.append(select_donor_region(trc.loc[f], r))
+    def filter_cell_region(self, key, percentile):
+        if percentile <= 0:
+            return
 
-            self.track_data[key] = pd.concat(trc_filtered, keys=files)
+        f = self.track_filters[key]
+        trc = f.tracks
 
-    def find_beam_shape_thresh(self):
+        files = np.unique(trc.index.levels[0])
+        mask = collections.OrderedDict(
+            [(v, self.load_cell_mask(v, percentile)) for v in files])
+
+        f.image_mask(mask, channel="donor")
+
+    def find_beam_shape_thresh(self, channel):
+        bs = self.beam_shapes[channel]
+
         tw = ipywidgets.BoundedIntText(value=75, min=0, max=100)
         @ipywidgets.interact(thresh=tw)
         def show_cell(thresh):
             fig, (ax1, ax2) = plt.subplots(1, 2)
-            ax1.imshow(self.beam_shape.corr_img)
-            ax2.imshow(self.beam_shape.corr_img > thresh / 100)
+            ax1.imshow(bs.corr_img)
+            ax2.imshow(bs.corr_img * 100 > thresh)
 
             fig.tight_layout()
             plt.show()
 
-    def filter_beam_shape_region(self, thresh):
-        mask = self.beam_shape.corr_img > thresh / 100
-        for key in self.track_data:
-            trc = self.track_data[key]
-            self.track_data[key] = select_donor_region(trc, mask)
+    def filter_beam_shape_region(self, channel, thresh):
+        mask = self.beam_shapes[channel].corr_img * 100 > thresh
+        for v in self.track_filters.values():
+            v.image_mask(mask, channel)
 
     def save_data(self, file_prefix="filtered"):
-        with pd.HDFStore(f"{file_prefix}-v{output_version:03}.h5") as s:
-            for key, trc in self.track_data.items():
-                s[f"{key}_trc"] = trc
+        with pd.HDFStore("{}-v{:03}.h5".format(file_prefix,
+                                               output_version)) as s:
+            for key, filt in self.track_filters.items():
+                s["{}_trc".format(key)] = filt.tracks
 
-        with open(f"{file_prefix}-v{output_version:03}.yaml", "w") as f:
-            v = {k: float(v)
-                 for k, v in self.beam_shape.fit_result.best_values.items()}
-            io.yaml.safe_dump(dict(beam_shape_fit=v), f,
+        yadict = {}
+        for k, v in self.beam_shapes.items():
+            if v is None:
+                continue
+            res = {k2: float(v2)
+                   for k2, v2 in v.fit_result.best_values.items()}
+            yadict[k] = res
+
+        with open("{}-v{:03}.yaml".format(file_prefix, output_version),
+                  "w") as f:
+            io.yaml.safe_dump(dict(beam_shapes=yadict), f,
                               default_flow_style=False)
 
     def show_raw_track(self, key):
@@ -350,17 +313,22 @@ class Filter:
             eff_thresh=ipywidgets.BoundedFloatText(min=0, max=1, value=0.6),
             frame=ipywidgets.IntText(value=0))
         def show_track(particle, frame, eff_thresh):
-            df = self.track_data[key]
+            df = self.track_filters[key].tracks_orig
             df = df[df["fret", "particle"] == particle]
             fname = df.iloc[0].name[0]
             print(fname)
 
+            exc = np.array(list(self.excitation_scheme))
+            d_frames = np.nonzero(exc == "d")[0]
+            a_frames = np.nonzero(exc == "a")[0]
+
             # FIXME: This works only for "da" excitation scheme
-            fno_d = 2 * frame + 1
-            fno_a = 2 * frame + 2
+            fno_d = d_frames[frame]
+            fno_a = a_frames[np.nonzero(a_frames > fno_d)[0][0]]
+            fno_i = self.excitation_scheme.find("o")
 
             with pims.open(fname) as fr:
-                img_c = self.don_roi(fr[0])
+                img_c = self.rois["donor"](fr[fno_i])
                 img_d = fr[fno_d]
                 img_a = fr[fno_a]
 
@@ -373,17 +341,16 @@ class Filter:
             ax_a.set_title("acceptor")
             ax_aa.set_title("acceptor (direct)")
 
-            img_dd = self.don_roi(img_d)
-            img_da = self.acc_roi(img_d)
-            img_aa = self.acc_roi(img_a)
+            img_dd = self.rois["donor"](img_d)
+            img_da = self.rois["acceptor"](img_d)
+            img_aa = self.rois["acceptor"](img_a)
 
             ax_d.imshow(img_dd, vmin=img_dd.min())
             ax_a.imshow(img_da, vmin=img_da.min())
             ax_aa.imshow(img_aa, vmin=img_aa.min())
 
-            df = self.track_data[key].loc[fname]
-            df_d = df[df["acceptor", "frame"] == fno_d-1]
-            df_a = df[df["acceptor", "frame"] == fno_a-1]
+            df_d = df[df["acceptor", "frame"] == fno_d]
+            df_a = df[df["acceptor", "frame"] == fno_a]
             mask_d = np.ones(len(df_d), dtype=bool)
             mask_a = np.ones(len(df_a), dtype=bool)
             eff_mask = df_d["fret", "eff"] < eff_thresh
@@ -413,10 +380,10 @@ class Filter:
             plt.show()
 
     def show_trajectory(self, key):
-        tr = self.track_data[key]
+        tr = self.track_filters[key].tracks_orig
         pnos = tr["fret", "particle"].unique()
 
-        @ipywidgets.interact(particle=ipywidgets.IntText(default=0))
+        @ipywidgets.interact(particle=ipywidgets.IntText(value=0))
         def show_track(particle):
             p = pnos[particle]
             fig, ax = plt.subplots(figsize=(10, 10))

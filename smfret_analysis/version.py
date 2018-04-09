@@ -2,7 +2,7 @@ import sdt
 
 
 __version__ = "1.0.dev"
-output_version = 6
+output_version = 7
 
 
 def print_info():
