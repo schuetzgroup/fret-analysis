@@ -11,7 +11,7 @@ import ipywidgets
 import pims
 
 from sdt import roi, chromatic, io, image
-from sdt.fret import SmFretTracker, FretExcImageFilter
+from sdt.fret import SmFretTracker, FretImageSelector
 from sdt.loc import daostorm_3d
 from sdt.nbui import Locator
 
@@ -25,7 +25,7 @@ class SmFretTrackerUi:
         self.acc_roi = roi.ROI(acc_o, (acc_o[0] + roi_size[0],
                                        acc_o[1] + roi_size[1]))
         self.exc_scheme = exc_scheme
-        self.exc_img_filter = FretExcImageFilter(exc_scheme)
+        self.exc_img_filter = FretImageSelector(exc_scheme)
         self.cc = None
         self.img = collections.OrderedDict()
         self.loc_data = collections.OrderedDict()
