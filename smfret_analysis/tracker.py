@@ -53,7 +53,7 @@ class Tracker:
         self.bead_loc_options = self.bead_locator.get_options()
 
         bead_loc = []
-        for f in self.bead_locator.file_selector.options:
+        for f in self.bead_files:
             with pims.open(f) as i:
                 bead_loc.append(daostorm_3d.batch(
                     i[:max_frame], **self.bead_loc_options))
