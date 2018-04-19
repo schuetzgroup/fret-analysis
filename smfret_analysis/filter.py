@@ -19,6 +19,7 @@ bokeh.plotting.output_notebook(bokeh.resources.INLINE)
 from sdt import io, roi, fret, chromatic, beam_shape, changepoint, helper
 
 from .version import output_version
+from .tracker import Tracker
 
 
 def get_cell_region(img, percentile=85):
@@ -28,23 +29,14 @@ def get_cell_region(img, percentile=85):
 
 class Filter:
     def __init__(self, file_prefix="tracking"):
-        with open("{}-v{:03}.yaml".format(file_prefix, output_version)) as f:
-            tracking_meta = io.yaml.safe_load(f)
-
-        self.rois = {k: tracking_meta["rois"][k]
-                     for k in ("donor", "acceptor")}
-
-        cn = "{}-v{:03}_chromatic.npz".format(file_prefix, output_version)
-        self.cc = chromatic.Corrector.load(cn)
-
-        with pd.HDFStore("{}-v{:03}.h5".format(file_prefix, output_version,
-                                               "r")) as s:
-            self.track_filters = collections.OrderedDict(
-                [(k[1:-4], fret.SmFretFilter(s[k])) for k in s.keys()
-                 if k.endswith("_trc")])
+        tr = Tracker(file_prefix, loc=False)
+        self.rois = tr.rois
+        self.cc = tr.cc
+        self.track_filters = {k: fret.SmFretFilter(v)
+                              for k, v in tr.track_data.items()}
+        self.exc_scheme = tr.exc_scheme
 
         self.beam_shapes = {"donor": None, "acceptor": None}
-        self.excitation_scheme = tracking_meta["excitation_scheme"]
 
     def calc_beam_shape_sm(self, keys="all", channel="donor", weighted=True):
         if not len(keys):
