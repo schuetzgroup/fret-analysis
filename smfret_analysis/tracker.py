@@ -20,10 +20,11 @@ from .version import output_version
 
 class Tracker:
     def __init__(self, don_o, acc_o, roi_size, exc_scheme="da"):
-        self.don_roi = roi.ROI(don_o, (don_o[0] + roi_size[0],
-                                       don_o[1] + roi_size[1]))
-        self.acc_roi = roi.ROI(acc_o, (acc_o[0] + roi_size[0],
-                                       acc_o[1] + roi_size[1]))
+        self.rois = dict(
+            donor=roi.ROI(don_o, (don_o[0] + roi_size[0],
+                                  don_o[1] + roi_size[1])),
+            acceptor=roi.ROI(acc_o, (acc_o[0] + roi_size[0],
+                                     acc_o[1] + roi_size[1])))
         self.exc_scheme = exc_scheme
         self.exc_img_filter = FretImageSelector(exc_scheme)
         self.cc = None
@@ -57,8 +58,8 @@ class Tracker:
                 bead_loc.append(daostorm_3d.batch(
                     i[:max_frame], **self.bead_loc_options))
 
-        acc_beads = [self.acc_roi(l) for l in bead_loc]
-        don_beads = [self.don_roi(l) for l in bead_loc]
+        acc_beads = [self.rois["acceptor"](l) for l in bead_loc]
+        don_beads = [self.rois["donor"](l) for l in bead_loc]
         # things below assume that first channel is donor, second is acceptor
         cc = chromatic.Corrector(don_beads, acc_beads)
         cc.determine_parameters(**params)
@@ -73,8 +74,8 @@ class Tracker:
 
     def donor_sum(self, fr):
         fr = self.exc_img_filter(fr, "d")
-        fr_d = self.don_roi(fr)
-        fr_a = self.acc_roi(fr)
+        fr_d = self.rois["donor"](fr)
+        fr_a = self.rois["acceptor"](fr)
         return [a + self.cc(d, channel=1, cval=d.mean())
                 for d, a in zip(fr_d, fr_a)]
 
@@ -89,7 +90,8 @@ class Tracker:
     def set_acc_loc_opts(self, key, idx):
         i_name = self.img[key][idx]
         with pims.open(i_name) as fr:
-            lo = {i_name: list(self.acc_roi(self.exc_img_filter(fr, "a")))}
+            lo = {i_name: list(self.rois["acceptor"](
+                self.exc_img_filter(fr, "a")))}
         self.acceptor_locator = Locator(lo)
         if isinstance(self.acceptor_loc_options, dict):
             self.acceptor_locator.set_options(**self.acceptor_loc_options)
@@ -114,7 +116,7 @@ class Tracker:
                     for o in overlay:
                         o[o < 1] = 1
                     lo_d = daostorm_3d.batch(overlay, **self.donor_loc_options)
-                    acc_fr = list(self.acc_roi(
+                    acc_fr = list(self.rois["acceptor"](
                         self.exc_img_filter(fr, "a")))
                     for a in acc_fr:
                         a[a < 1] = 1
@@ -125,7 +127,7 @@ class Tracker:
 
                     # correct for the fact that locating happend in the
                     # acceptor ROI
-                    lo[["x", "y"]] += self.acc_roi.top_left
+                    lo[["x", "y"]] += self.rois["acceptor"].top_left
                     ret.append(lo)
             self.loc_data[key] = ret
 
@@ -149,14 +151,14 @@ class Tracker:
                 cnt += 1
 
                 with pims.open(f) as img:
-                    don_loc = self.don_roi(loc)
-                    acc_loc = self.acc_roi(loc)
+                    don_loc = self.rois["donor"](loc)
+                    acc_loc = self.rois["acceptor"](loc)
 
                     if image_filter is not None:
                         img = image_filter(img)
 
                     d = self.tracker.track(
-                        self.don_roi(img), self.acc_roi(img),
+                        self.rois["donor"](img), self.rois["acceptor"](img),
                         don_loc, acc_loc)
                 ps = d["fret", "particle"].copy().values
                 for p in np.unique(ps):
@@ -181,13 +183,12 @@ class Tracker:
                 self.tracker.analyze(t, aa_interp="linear")
 
     def save_data(self, file_prefix="tracking"):
-        rois = dict(donor=self.don_roi, acceptor=self.acc_roi)
         loc_options = collections.OrderedDict([
             ("donor", self.donor_loc_options),
             ("acceptor", self.acceptor_loc_options),
             ("beads", self.bead_loc_options)])
         top = collections.OrderedDict(
-            excitation_scheme=self.exc_scheme, rois=rois,
+            excitation_scheme=self.exc_scheme, rois=self.rois,
             loc_options=loc_options, files=self.img,
             bead_files=self.bead_files)
         with open("{}-v{:03}.yaml".format(file_prefix, output_version),
@@ -214,8 +215,7 @@ class Tracker:
         with open("{}-v{:03}.yaml".format(file_prefix, output_version)) as f:
             cfg = io.yaml.safe_load(f)
         ret = cls([0, 0], [0, 0], [0, 0], cfg["excitation_scheme"])
-        ret.don_roi = cfg["rois"]["donor"]
-        ret.acc_roi = cfg["rois"]["acceptor"]
+        ret.rois = cfg["rois"]
         ret.img = cfg["files"]
         ret.bead_files = cfg["bead_files"]
         ret.bead_loc_options = cfg["loc_options"]["beads"]
