@@ -18,7 +18,7 @@ from sdt.nbui import Locator
 from .version import output_version
 
 
-class SmFretTrackerUi:
+class Tracker:
     def __init__(self, don_o, acc_o, roi_size, exc_scheme="da"):
         self.don_roi = roi.ROI(don_o, (don_o[0] + roi_size[0],
                                        don_o[1] + roi_size[1]))

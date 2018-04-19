@@ -1,4 +1,4 @@
 from .version import *
-from .tracker import SmFretTrackerUi
-from .filter import SmFretFilterUi
+from .tracker import Tracker
+from .filter import Filter
 from .plotter import Plotter

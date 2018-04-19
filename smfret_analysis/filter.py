@@ -26,7 +26,7 @@ def get_cell_region(img, percentile=85):
     return ndimage.binary_fill_holes(r)
 
 
-class SmFretFilterUi:
+class Filter:
     def __init__(self, file_prefix="tracking"):
         with open("{}-v{:03}.yaml".format(file_prefix, output_version)) as f:
             tracking_meta = io.yaml.safe_load(f)
