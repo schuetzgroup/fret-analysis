@@ -129,7 +129,7 @@ class Tracker:
                     # acceptor ROI
                     lo[["x", "y"]] += self.rois["acceptor"].top_left
                     ret.append(lo)
-            self.loc_data[key] = ret
+            self.loc_data[key] = pd.concat(ret, keys=files)
 
     def track(self, feat_radius=4, bg_frame=3, link_radius=1, link_mem=1,
               min_length=4, bg_estimator="mean",
@@ -145,8 +145,10 @@ class Tracker:
 
         for key in self.img:
             ret = []
+            ret_keys = []
             new_p = 0  # Particle ID unique across files
-            for f, loc in zip(self.img[key], self.loc_data[key]):
+            for f in self.loc_data[key].index.levels[0].unique():
+                loc = self.loc_data[key].loc[f].copy()
                 label.value = "Tracking {} ({}/{})".format(f, cnt, num_files)
                 cnt += 1
 
@@ -165,22 +167,13 @@ class Tracker:
                     d.loc[ps == p, ("fret", "particle")] = new_p
                     new_p += 1
                 ret.append(d)
+                ret_keys.append(f)
 
-            self.track_data[key] = ret
+            self.track_data[key] = pd.concat(ret, keys=ret_keys)
 
     def analyze(self):
-        num_files = sum(len(i) for i in self.track_data.values())
-        cnt = 1
-        label = ipywidgets.Label(value="Starting…")
-        display(label)
-
-        for key in self.img:
-            for f, t in zip(self.img[key], self.track_data[key]):
-                v = "Calculating FRET values {}  ({}/{})".format(f, cnt,
-                                                                 num_files)
-                label.value = v
-                cnt += 1
-                self.tracker.analyze(t, aa_interp="linear")
+        for t in self.track_data.values():
+            self.tracker.analyze(t, aa_interp="linear")
 
     def save_data(self, file_prefix="tracking"):
         loc_options = collections.OrderedDict([
@@ -201,14 +194,10 @@ class Tracker:
 
         with pd.HDFStore("{}-v{:03}.h5".format(file_prefix,
                                                output_version)) as s:
-            for key in self.img:
-                with suppress(KeyError):
-                    loc = pd.concat(self.loc_data[key], keys=self.img[key])
-                    s["{}_loc".format(key)] = loc
-
-                with suppress(KeyError):
-                    trc = pd.concat(self.track_data[key], keys=self.img[key])
-                    s["{}_trc".format(key)] = trc
+            for key, loc in self.loc_data.items():
+                s["{}_loc".format(key)] = loc
+            for key, trc in self.track_data.items():
+                s["{}_trc".format(key)] = trc
 
     @classmethod
     def load(cls, file_prefix="tracking"):
@@ -235,17 +224,7 @@ class Tracker:
                 keys = (k for k in s.keys() if k.endswith(suffix))
                 for k in keys:
                     new_key = k[1:-len(suffix)]
-                    df = s[k]
-
-                    df_list = []
-                    if new_key not in ret.img:
-                        continue
-                    for f in ret.img[new_key]:
-                        try:
-                            df_list.append(df.loc[f])
-                        except KeyError:
-                            df_list.append(df.iloc[:0].copy())
-                    sink[new_key] = df_list
+                    sink[new_key] = s[k]
 
         return ret
 
