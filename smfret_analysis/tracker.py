@@ -200,7 +200,7 @@ class Tracker:
                 s["{}_trc".format(key)] = trc
 
     @classmethod
-    def load(cls, file_prefix="tracking"):
+    def load(cls, file_prefix="tracking", loc=True, tracks=True):
         with open("{}-v{:03}.yaml".format(file_prefix, output_version)) as f:
             cfg = io.yaml.safe_load(f)
         ret = cls([0, 0], [0, 0], [0, 0], cfg["excitation_scheme"])
@@ -217,10 +217,14 @@ class Tracker:
         except FileNotFoundError:
             ret.cc = None
 
+        do_load = []
+        if loc:
+            do_load.append((ret.loc_data, "_loc"))
+        if tracks:
+            do_load.append((ret.track_data, "_trc"))
         with pd.HDFStore("{}-v{:03}.h5".format(file_prefix,
                                                output_version), "r") as s:
-            for sink, suffix in zip((ret.loc_data, ret.track_data),
-                                    ("_loc", "_trc")):
+            for sink, suffix in do_load:
                 keys = (k for k in s.keys() if k.endswith(suffix))
                 for k in keys:
                     new_key = k[1:-len(suffix)]
