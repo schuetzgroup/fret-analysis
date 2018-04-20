@@ -14,7 +14,7 @@ import pims
 import bokeh.plotting
 import bokeh.application as b_app
 import bokeh.application.handlers as b_hnd
-bokeh.plotting.output_notebook(bokeh.resources.INLINE)
+bokeh.plotting.output_notebook(bokeh.resources.INLINE, hide_banner=True)
 
 from sdt import io, roi, fret, chromatic, beam_shape, changepoint, helper
 
