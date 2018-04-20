@@ -45,11 +45,11 @@ class Filter:
         if channel.startswith("d"):
             k = "donor"
             mk = "d_mass"
-            f = self.excitation_scheme.find("d")
+            f = self.exc_scheme.find("d")
         elif channel.startswith("a"):
             k = "acceptor"
             mk = "a_mass"
-            f = self.excitation_scheme.find("a")
+            f = self.exc_scheme.find("a")
         else:
             raise ValueError("Channel must be \"donor\" or \"acceptor\".")
 
@@ -126,7 +126,7 @@ class Filter:
     def find_brightness_params(self, key):
         dat = self.track_filters[key].tracks
         dat0 = dat[(dat["fret", "has_neighbor"] == 1) &
-                   (dat["donor", "frame"] == self.excitation_scheme.find("d"))]
+                   (dat["donor", "frame"] == self.exc_scheme.find("d"))]
 
         ds = bokeh.models.ColumnDataSource(dat0)
         ds.data["file"] = [i[0] for i in ds.data["index"]]
@@ -224,7 +224,7 @@ class Filter:
             f.query(expr, mi_sep)
 
     def load_cell_mask(self, file, percentile, return_img=False):
-        frame_no = self.excitation_scheme.find("o")
+        frame_no = self.exc_scheme.find("o")
         with pims.open(file) as fr:
             img = self.rois["donor"](fr[frame_no])
         mask = get_cell_region(img, percentile)
