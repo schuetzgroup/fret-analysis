@@ -29,7 +29,7 @@ def get_cell_region(img, percentile=85):
 
 class Filter:
     def __init__(self, file_prefix="tracking"):
-        tr = Tracker(file_prefix, loc=False)
+        tr = Tracker.load(file_prefix, loc=False)
         self.rois = tr.rois
         self.cc = tr.cc
         self.track_filters = {k: fret.SmFretFilter(v)
@@ -91,7 +91,8 @@ class Filter:
             f = self.track_filters[key]
             t = f.tracks
             t = t[t["fret", "particle"] == p]
-            t = t[t["fret", "exc_type"] == fret.excitation_type_nums["d"]]
+            t = t[t["fret", "exc_type"] ==
+                  fret.SmFretTracker.exc_type_nums["d"]]
 
             fig, ax = plt.subplots(1, 3, figsize=(12, 4))
             fs = t["donor", "frame"].values
@@ -120,8 +121,8 @@ class Filter:
 
     def filter_acc_bleach(self, cp_penalty, brightness_thresh):
         for f in self.track_filters.values():
-            f.find_acceptor_bleach(cp_penalty, brightness_thresh,
-                                   truncate=True)
+            f.acceptor_bleach_step(brightness_thresh, truncate=True,
+                                   penalty=cp_penalty)
 
     def find_brightness_params(self, key):
         dat = self.track_filters[key].tracks
@@ -257,9 +258,7 @@ class Filter:
         trc = f.tracks
 
         files = np.unique(trc.index.levels[0])
-        mask = collections.OrderedDict(
-            [(v, self.load_cell_mask(v, percentile)) for v in files])
-
+        mask = [(v, self.load_cell_mask(v, percentile)) for v in files]
         f.image_mask(mask, channel="donor")
 
     def find_beam_shape_thresh(self, channel):
