@@ -31,10 +31,10 @@ class Filter:
     def __init__(self, file_prefix="tracking"):
         tr = Tracker.load(file_prefix, loc=False)
         self.rois = tr.rois
-        self.cc = tr.cc
+        self.cc = tr.tracker.chromatic_corr
         self.track_filters = {k: fret.SmFretFilter(v)
                               for k, v in tr.track_data.items()}
-        self.exc_scheme = tr.exc_scheme
+        self.exc_scheme = "".join(tr.tracker.excitation_seq)
 
         self.beam_shapes = {"donor": None, "acceptor": None}
 

@@ -13,7 +13,7 @@ class Inspector:
     def __init__(self, file_prefix="tracking"):
         tr = Tracker.load(file_prefix, loc=False)
         self.track_data = tr.track_data
-        self.exc_scheme = tr.exc_scheme
+        self.exc_scheme = "".join(tr.tracker.excitation_seq)
         self.rois = tr.rois
 
     def mark_track(self, key):
