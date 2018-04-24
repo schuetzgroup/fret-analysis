@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import ipywidgets
 import pims
 
-from sdt import fret
+from sdt import fret, helper
 
 from .tracker import Tracker
 
@@ -87,7 +87,7 @@ class Inspector:
             fig.tight_layout()
             plt.show()
 
-    def plot_track(self, key):
+    def show_track(self, key):
         tr = self.track_data[key]
         pnos = tr["fret", "particle"].unique()
 
@@ -101,8 +101,8 @@ class Inspector:
             print(t["fret", "eff"].mean())
             plt.show()
 
-    def track_features(self, key, particle, figsize=None, colums=8,
-                       img_size=3):
+    def raw_features(self, key, particle, figsize=None, colums=8,
+                     img_size=3):
         t = self.track_data[key]
         t0 = t[t["fret", "particle"] == particle]
         fname = t0.index[0][0]
@@ -114,4 +114,42 @@ class Inspector:
             acc_img = self.rois["acceptor"](img)
 
             fret.draw_track(t0, particle, don_img, acc_img, img_size,
-                            columns=colums, figure=fig);
+                            columns=colums, figure=fig)
+
+    def show_all_tracks(self, key):
+        dat = self.track_data[key]
+        files = dat.index.levels[0].unique()
+
+        @ipywidgets.interact(file=ipywidgets.Dropdown(options=files))
+        def plot(file):
+            fig, ax = plt.subplots(figsize=(8, 8))
+
+            d = dat.loc[file]
+            for p, trc in helper.split_dataframe(
+                    d, ("fret", "particle"),
+                    [("donor", "x"), ("donor", "y")]):
+                ax.plot(trc[:, 0], trc[:, 1])
+                ax.text(*trc[0], str(p))
+            plt.show()
+
+    def plot_tracks(self, key, particles, axes):
+        data = self.track_data[key]
+        fig, ax = plt.subplots(1, len(axes), figsize=(10, 5))
+
+        info = []
+        for p in particles:
+            d = data[(data["fret", "particle"] == p) &
+                     (data["fret", "exc_type"] == 0)]
+            for a, (x, y) in zip(ax, axes):
+                a.plot(d[x], d[y], ".-")
+                a.set_xlabel(" ".join(x))
+                a.set_ylabel(" ".join(y))
+            info.append("particle {}: start {}, end {}".format(
+                p, d["donor", "frame"].min(), d["donor", "frame"].max()))
+
+        for a in ax.flatten():
+            a.grid()
+
+        fig.tight_layout()
+        plt.show()
+        print("\n".join(info))
