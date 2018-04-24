@@ -19,15 +19,12 @@ from .version import output_version
 
 
 class Tracker:
-    def __init__(self, don_o, acc_o, roi_size, exc_scheme="da"):
+    def __init__(self, don_o, acc_o, roi_shape, exc_scheme="da"):
         self.rois = dict(
-            donor=roi.ROI(don_o, (don_o[0] + roi_size[0],
-                                  don_o[1] + roi_size[1])),
-            acceptor=roi.ROI(acc_o, (acc_o[0] + roi_size[0],
-                                     acc_o[1] + roi_size[1])))
-        self.exc_scheme = exc_scheme
+            donor=roi.ROI(don_o, shape=roi_shape),
+            acceptor=roi.ROI(acc_o, shape=roi_shape))
+        self.tracker = SmFretTracker(exc_scheme)
         self.exc_img_filter = FretImageSelector(exc_scheme)
-        self.cc = None
         self.img = collections.OrderedDict()
         self.loc_data = collections.OrderedDict()
         self.track_data = collections.OrderedDict()
@@ -67,7 +64,7 @@ class Tracker:
         if plot:
             cc.test()
 
-        self.cc = cc
+        self.tracker.chromatic_corr = cc
 
     def add_dataset(self, key, files_re):
         self.img[key] = io.get_files(files_re)[0]
@@ -102,8 +99,14 @@ class Tracker:
         label = ipywidgets.Label(value="Starting…")
         display(label)
 
-        self.donor_loc_options = self.donor_locator.get_options()
-        self.acceptor_loc_options = self.acceptor_locator.get_options()
+        if self.donor_locator is not None:
+            self.donor_loc_options = self.donor_locator.get_options()
+        if self.acceptor_locator is not None:
+            self.acceptor_loc_options = self.acceptor_locator.get_options()
+        if None in (self.donor_loc_options, self.acceptor_loc_options):
+            raise RuntimeError("Localization options not set. Either set "
+                               "{donor,acceptor}_loc_options or use the "
+                               "`set_{don,acc}_loc_opts` methods.")
 
         for key, files in self.img.items():
             ret = []
@@ -139,9 +142,12 @@ class Tracker:
         label = ipywidgets.Label(value="Starting…")
         display(label)
 
-        self.tracker = SmFretTracker(self.exc_scheme, self.cc, link_radius,
-                                     link_mem, min_length, feat_radius,
-                                     bg_frame, bg_estimator, interpolate=True)
+        self.tracker.link_options.update({"search_range": link_radius,
+                                          "memory": link_mem})
+        self.tracker.brightness_options.update({"radius": feat_radius,
+                                                "bg_frame": bg_frame,
+                                                "bg_estimator": bg_estimator})
+        self.tracker.min_length = min_length
 
         for key in self.img:
             ret = []
@@ -173,7 +179,7 @@ class Tracker:
 
     def analyze(self):
         for t in self.track_data.values():
-            self.tracker.analyze(t, aa_interp="linear")
+            self.tracker.analyze(t)
 
     def save_data(self, file_prefix="tracking"):
         loc_options = collections.OrderedDict([
@@ -181,16 +187,11 @@ class Tracker:
             ("acceptor", self.acceptor_loc_options),
             ("beads", self.bead_loc_options)])
         top = collections.OrderedDict(
-            excitation_scheme=self.exc_scheme, rois=self.rois,
-            loc_options=loc_options, files=self.img,
-            bead_files=self.bead_files)
+            tracker=self.tracker, rois=self.rois, loc_options=loc_options,
+            files=self.img, bead_files=self.bead_files)
         with open("{}-v{:03}.yaml".format(file_prefix, output_version),
                   "w") as f:
-            io.yaml.safe_dump(top, f, default_flow_style=False)
-
-        with suppress(AttributeError):
-            fn = "{}-v{:03}_chromatic.npz".format(file_prefix, output_version)
-            self.cc.save(fn)
+            io.yaml.safe_dump(top, f)
 
         with pd.HDFStore("{}-v{:03}.h5".format(file_prefix,
                                                output_version)) as s:
@@ -203,19 +204,14 @@ class Tracker:
     def load(cls, file_prefix="tracking", loc=True, tracks=True):
         with open("{}-v{:03}.yaml".format(file_prefix, output_version)) as f:
             cfg = io.yaml.safe_load(f)
-        ret = cls([0, 0], [0, 0], [0, 0], cfg["excitation_scheme"])
+        ret = cls([0, 0], [0, 0], [0, 0], "")
         ret.rois = cfg["rois"]
         ret.img = cfg["files"]
         ret.bead_files = cfg["bead_files"]
         ret.bead_loc_options = cfg["loc_options"]["beads"]
         ret.donor_loc_options = cfg["loc_options"]["donor"]
         ret.acceptor_loc_options = cfg["loc_options"]["acceptor"]
-
-        try:
-            fn = "{}-v{:03}_chromatic.npz".format(file_prefix, output_version)
-            ret.cc = chromatic.Corrector.load(fn)
-        except FileNotFoundError:
-            ret.cc = None
+        ret.tracker = cfg["tracker"]
 
         do_load = []
         if loc:
