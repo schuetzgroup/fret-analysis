@@ -46,8 +46,8 @@ class Tracker:
         if isinstance(self.bead_loc_options, dict):
             self.bead_locator.set_options(**self.bead_loc_options)
 
-    def make_chromatic(self, loc=True, plot=True, max_frame=None, params={}):
         self.bead_loc_options = self.bead_locator.get_options()
+    def make_chromatic(self, plot=True, max_frame=None, params={}):
 
         bead_loc = []
         for f in self.bead_files:
@@ -57,7 +57,6 @@ class Tracker:
 
         acc_beads = [self.rois["acceptor"](l) for l in bead_loc]
         don_beads = [self.rois["donor"](l) for l in bead_loc]
-        # things below assume that first channel is donor, second is acceptor
         cc = chromatic.Corrector(don_beads, acc_beads)
         cc.determine_parameters(**params)
 
