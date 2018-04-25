@@ -6,6 +6,6 @@ output_version = 7
 
 
 def print_info():
-    print(f"""Skript version {__version__}
+    print(f"""smFRET analysis software version {__version__}
 Output version {output_version}
 Using sdt-python version {sdt.__version__}""")
