@@ -46,8 +46,13 @@ class Tracker:
         if isinstance(self.bead_loc_options, dict):
             self.bead_locator.set_options(**self.bead_loc_options)
 
-        self.bead_loc_options = self.bead_locator.get_options()
     def make_chromatic(self, plot=True, max_frame=None, params={}):
+        if self.bead_locator is not None:
+            self.bead_loc_options = self.bead_locator.get_options()
+        if self.bead_loc_options is None:
+            raise RuntimeError("Localization options not set. Either set the"
+                               "`bead_loc_options` dict or use the "
+                               "`set_bead_loc_opts` method.")
 
         bead_loc = []
         for f in self.bead_files:
