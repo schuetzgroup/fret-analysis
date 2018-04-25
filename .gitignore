@@ -5,3 +5,5 @@ __pycache__
 *.egg-info
 .spyproject
 *.kdev4
+/*.ipynb
+.directory
