@@ -82,7 +82,7 @@ class Tracker:
         fr = self.exc_img_filter(fr, "d")
         fr_d = self.rois["donor"](fr)
         fr_a = self.rois["acceptor"](fr)
-        return [a + self.cc(d, channel=1, cval=d.mean())
+        return [a + self.tracker.chromatic_corr(d, channel=1, cval=d.mean())
                 for d, a in zip(fr_d, fr_a)]
 
     def set_don_loc_opts(self, key, idx):
