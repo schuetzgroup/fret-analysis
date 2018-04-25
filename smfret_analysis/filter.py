@@ -11,15 +11,13 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import pims
 
-import bokeh.plotting
-import bokeh.application as b_app
-import bokeh.application.handlers as b_hnd
-bokeh.plotting.output_notebook(bokeh.resources.INLINE, hide_banner=True)
-
 from sdt import io, roi, fret, chromatic, beam_shape, changepoint, helper
 
 from .version import output_version
 from .tracker import Tracker
+
+
+_bokeh_js_loaded = False
 
 
 def get_cell_region(img, percentile=85):
@@ -126,6 +124,16 @@ class Filter:
                                    penalty=cp_penalty)
 
     def find_brightness_params(self, key):
+        import bokeh.plotting
+        import bokeh.application as b_app
+        import bokeh.application.handlers as b_hnd
+
+        global _bokeh_js_loaded
+        if not _bokeh_js_loaded:
+            bokeh.plotting.output_notebook(bokeh.resources.INLINE,
+                                           hide_banner=True)
+            _bokeh_js_loaded = True
+
         dat = self.track_filters[key].tracks
         dat0 = dat[(dat["fret", "has_neighbor"] == 1) &
                    (dat["donor", "frame"] == self.exc_scheme.find("d"))]
