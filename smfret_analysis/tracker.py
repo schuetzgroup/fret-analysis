@@ -54,11 +54,16 @@ class Tracker:
                                "`bead_loc_options` dict or use the "
                                "`set_bead_loc_opts` method.")
 
+        label = ipywidgets.Label(value="Starting…")
+        display(label)
+
         bead_loc = []
-        for f in self.bead_files:
+        for n, f in enumerate(self.bead_files):
+            label.value = f"Locating beads (file {n+1}/{len(self.bead_files)})"
             with pims.open(f) as i:
                 bead_loc.append(daostorm_3d.batch(
                     i[:max_frame], **self.bead_loc_options))
+        label.layout = ipywidgets.Layout(display="none")
 
         acc_beads = [self.rois["acceptor"](l) for l in bead_loc]
         don_beads = [self.rois["donor"](l) for l in bead_loc]
@@ -115,7 +120,7 @@ class Tracker:
         for key, files in self.img.items():
             ret = []
             for i, f in enumerate(files):
-                label.value = "Locating {} ({}/{})".format(f, cnt, num_files)
+                label.value = f"Locating {f} ({cnt}/{num_files})"
                 cnt += 1
 
                 with pims.open(f) as fr:
@@ -159,7 +164,7 @@ class Tracker:
             new_p = 0  # Particle ID unique across files
             for f in self.loc_data[key].index.levels[0].unique():
                 loc = self.loc_data[key].loc[f].copy()
-                label.value = "Tracking {} ({}/{})".format(f, cnt, num_files)
+                label.value = f"Tracking {f} ({cnt}/{num_files})"
                 cnt += 1
 
                 with pims.open(f) as img:
