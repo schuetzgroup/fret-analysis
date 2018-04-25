@@ -1,4 +1,5 @@
 import math
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -10,10 +11,11 @@ from .version import output_version
 
 
 class Plotter:
-    def __init__(self, file_prefix="filtered"):
+    def __init__(self, file_prefix="filtered", data_dir=""):
         self.track_data = {}
-        with pd.HDFStore("{}-v{:03}.h5".format(file_prefix, output_version),
-                         "r") as s:
+        self.data_dir = Path(data_dir)
+        infile = self.data_dir / f"{file_prefix}-v{output_version:03}.h5"
+        with pd.HDFStore(infile, "r") as s:
             for k in s.keys():
                 if not k.endswith("_trc"):
                     continue
