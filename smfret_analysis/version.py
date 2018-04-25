@@ -1,11 +1,25 @@
+import subprocess
+
 import sdt
 
 
-__version__ = "1.0.dev"
+try:
+    git_desc = subprocess.check_output(["git", "describe", "--always"])
+    git_desc = git_desc.decode().strip()
+except Exception:
+    git_desc = "unknown"
+
+__version__ = "1.0"
 output_version = 7
 
 
 def print_info():
+    try:
+        git_rev = subprocess.check_output(["git", "describe", "--always"])
+    except Exception:
+        git_rev = "unknown"
+
     print(f"""smFRET analysis software version {__version__}
+(git revision {git_desc})
 Output version {output_version}
 Using sdt-python version {sdt.__version__}""")
