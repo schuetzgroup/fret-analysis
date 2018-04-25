@@ -4,6 +4,7 @@ import tempfile
 import subprocess
 import collections
 from contextlib import suppress
+from pathlib import Path
 
 import pandas as pd
 import numpy as np
@@ -19,7 +20,8 @@ from .version import output_version
 
 
 class Tracker:
-    def __init__(self, don_o, acc_o, roi_shape, exc_scheme="da"):
+    def __init__(self, don_o, acc_o, roi_shape, exc_scheme="da",
+                 data_dir=""):
         self.rois = dict(
             donor=roi.ROI(don_o, shape=roi_shape),
             acceptor=roi.ROI(acc_o, shape=roi_shape))
@@ -28,6 +30,7 @@ class Tracker:
         self.img = collections.OrderedDict()
         self.loc_data = collections.OrderedDict()
         self.track_data = collections.OrderedDict()
+        self.data_dir = Path(data_dir)
 
         self.bead_files = []
         self.bead_locator = None
@@ -41,8 +44,9 @@ class Tracker:
 
     def set_bead_loc_opts(self, files_re=None):
         if files_re is not None:
-            self.bead_files = io.get_files(files_re)[0]
-        self.bead_locator = Locator(self.bead_files)
+            self.bead_files = io.get_files(files_re, self.data_dir)[0]
+        self.bead_locator = Locator([str(self.data_dir / f)
+                                     for f in self.bead_files])
         if isinstance(self.bead_loc_options, dict):
             self.bead_locator.set_options(**self.bead_loc_options)
 
@@ -60,7 +64,7 @@ class Tracker:
         bead_loc = []
         for n, f in enumerate(self.bead_files):
             label.value = f"Locating beads (file {n+1}/{len(self.bead_files)})"
-            with pims.open(f) as i:
+            with pims.open(str(self.data_dir / f)) as i:
                 bead_loc.append(daostorm_3d.batch(
                     i[:max_frame], **self.bead_loc_options))
         label.layout = ipywidgets.Layout(display="none")
@@ -76,7 +80,7 @@ class Tracker:
         self.tracker.chromatic_corr = cc
 
     def add_dataset(self, key, files_re):
-        self.img[key] = io.get_files(files_re)[0]
+        self.img[key] = io.get_files(files_re, self.data_dir)[0]
 
     def donor_sum(self, fr):
         fr = self.exc_img_filter(fr, "d")
@@ -87,7 +91,7 @@ class Tracker:
 
     def set_don_loc_opts(self, key, idx):
         i_name = self.img[key][idx]
-        with pims.open(i_name) as fr:
+        with pims.open(str(self.data_dir / i_name)) as fr:
             lo = {i_name: self.donor_sum(fr)}
         self.donor_locator = Locator(lo)
         if isinstance(self.donor_loc_options, dict):
@@ -95,7 +99,7 @@ class Tracker:
 
     def set_acc_loc_opts(self, key, idx):
         i_name = self.img[key][idx]
-        with pims.open(i_name) as fr:
+        with pims.open(str(self.data_dir / i_name)) as fr:
             lo = {i_name: list(self.rois["acceptor"](
                 self.exc_img_filter(fr, "a")))}
         self.acceptor_locator = Locator(lo)
@@ -123,7 +127,7 @@ class Tracker:
                 label.value = f"Locating {f} ({cnt}/{num_files})"
                 cnt += 1
 
-                with pims.open(f) as fr:
+                with pims.open(str(self.data_dir / f)) as fr:
                     overlay = self.donor_sum(fr)
                     for o in overlay:
                         o[o < 1] = 1
@@ -167,7 +171,7 @@ class Tracker:
                 label.value = f"Tracking {f} ({cnt}/{num_files})"
                 cnt += 1
 
-                with pims.open(f) as img:
+                with pims.open(str(self.data_dir / f)) as img:
                     don_loc = self.rois["donor"](loc)
                     acc_loc = self.rois["acceptor"](loc)
 
@@ -198,20 +202,21 @@ class Tracker:
         top = collections.OrderedDict(
             tracker=self.tracker, rois=self.rois, loc_options=loc_options,
             files=self.img, bead_files=self.bead_files)
-        with open("{}-v{:03}.yaml".format(file_prefix, output_version),
-                  "w") as f:
+        outfile = self.data_dir / f"{file_prefix}-v{output_version:03}"
+        with outfile.with_suffix(".yaml").open("w") as f:
             io.yaml.safe_dump(top, f)
 
-        with pd.HDFStore("{}-v{:03}.h5".format(file_prefix,
-                                               output_version)) as s:
+        with pd.HDFStore(outfile.with_suffix(".h5")) as s:
             for key, loc in self.loc_data.items():
                 s["{}_loc".format(key)] = loc
             for key, trc in self.track_data.items():
                 s["{}_trc".format(key)] = trc
 
     @classmethod
-    def load(cls, file_prefix="tracking", loc=True, tracks=True):
-        with open("{}-v{:03}.yaml".format(file_prefix, output_version)) as f:
+    def load(cls, file_prefix="tracking", data_dir="", loc=True, tracks=True):
+        data_dir = Path(data_dir)
+        infile = data_dir / f"{file_prefix}-v{output_version:03}"
+        with infile.with_suffix(".yaml").open() as f:
             cfg = io.yaml.safe_load(f)
         ret = cls([0, 0], [0, 0], [0, 0], "")
         ret.rois = cfg["rois"]
@@ -221,14 +226,14 @@ class Tracker:
         ret.donor_loc_options = cfg["loc_options"]["donor"]
         ret.acceptor_loc_options = cfg["loc_options"]["acceptor"]
         ret.tracker = cfg["tracker"]
+        ret.data_dir = data_dir
 
         do_load = []
         if loc:
             do_load.append((ret.loc_data, "_loc"))
         if tracks:
             do_load.append((ret.track_data, "_trc"))
-        with pd.HDFStore("{}-v{:03}.h5".format(file_prefix,
-                                               output_version), "r") as s:
+        with pd.HDFStore(infile.with_suffix(".h5"), "r") as s:
             for sink, suffix in do_load:
                 keys = (k for k in s.keys() if k.endswith(suffix))
                 for k in keys:
