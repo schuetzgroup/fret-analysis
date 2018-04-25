@@ -10,11 +10,12 @@ from .tracker import Tracker
 
 
 class Inspector:
-    def __init__(self, file_prefix="tracking"):
-        tr = Tracker.load(file_prefix, loc=False)
+    def __init__(self, file_prefix="tracking", data_dir=""):
+        tr = Tracker.load(file_prefix, loc=False, data_dir=data_dir)
         self.track_data = tr.track_data
         self.exc_scheme = "".join(tr.tracker.excitation_seq)
         self.rois = tr.rois
+        self.data_dir = tr.data_dir
 
     def mark_track(self, key):
         @ipywidgets.interact(
@@ -35,7 +36,7 @@ class Inspector:
             fno_a = a_frames[np.nonzero(a_frames > fno_d)[0][0]]
             fno_i = self.exc_scheme.find("o")
 
-            with pims.open(fname) as fr:
+            with pims.open(str(self.data_dir / fname)) as fr:
                 img_c = self.rois["donor"](fr[fno_i])
                 img_d = fr[fno_d]
                 img_a = fr[fno_a]
@@ -109,7 +110,7 @@ class Inspector:
 
         fig = plt.figure(figsize=figsize)
 
-        with pims.open(fname) as img:
+        with pims.open(str(self.data_dir / fname)) as img:
             don_img = self.rois["donor"](img)
             acc_img = self.rois["acceptor"](img)
 
