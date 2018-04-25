@@ -28,13 +28,14 @@ def get_cell_region(img, percentile=85):
 
 
 class Filter:
-    def __init__(self, file_prefix="tracking"):
-        tr = Tracker.load(file_prefix, loc=False)
+    def __init__(self, file_prefix="tracking", data_dir=""):
+        tr = Tracker.load(file_prefix, loc=False, data_dir=data_dir)
         self.rois = tr.rois
         self.cc = tr.tracker.chromatic_corr
         self.track_filters = {k: fret.SmFretFilter(v)
                               for k, v in tr.track_data.items()}
         self.exc_scheme = "".join(tr.tracker.excitation_seq)
+        self.data_dir = tr.data_dir
 
         self.beam_shapes = {"donor": None, "acceptor": None}
 
@@ -78,7 +79,7 @@ class Filter:
         roi = self.rois[channel]
 
         for f in files:
-            with pims.open(f) as fr:
+            with pims.open(str(self.data_dir / f)) as fr:
                 imgs.append(roi(f[frame]))
 
         self.beam_shapes[channel] = beam_shape.Corrector(
@@ -226,7 +227,7 @@ class Filter:
 
     def load_cell_mask(self, file, percentile, return_img=False):
         frame_no = self.exc_scheme.find("o")
-        with pims.open(file) as fr:
+        with pims.open(str(self.data_dir / file)) as fr:
             img = self.rois["donor"](fr[frame_no])
         mask = get_cell_region(img, percentile)
         if return_img:
@@ -280,8 +281,8 @@ class Filter:
             v.image_mask(mask, channel)
 
     def save_data(self, file_prefix="filtered"):
-        with pd.HDFStore("{}-v{:03}.h5".format(file_prefix,
-                                               output_version)) as s:
+        outfile = self.data_dir / f"{file_prefix}-v{output_version:03}"
+        with pd.HDFStore(outfile.with_suffix(".h5")) as s:
             for key, filt in self.track_filters.items():
                 s["{}_trc".format(key)] = filt.tracks
 
@@ -293,7 +294,6 @@ class Filter:
                    for k2, v2 in v.fit_result.best_values.items()}
             yadict[k] = res
 
-        with open("{}-v{:03}.yaml".format(file_prefix, output_version),
-                  "w") as f:
+        with outfile.with_suffix(".yaml").open("w") as f:
             io.yaml.safe_dump(dict(beam_shapes=yadict), f,
                               default_flow_style=False)
