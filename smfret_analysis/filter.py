@@ -233,6 +233,11 @@ class Filter:
         for f in self.track_filters.values():
             f.query(expr, mi_sep)
 
+    def present_at_start(self):
+        first_d = self.exc_scheme.find("d")
+        for f in self.track_filters.values():
+            f.filter_particles(f"donor_frame == {first_d}")
+
     def load_cell_mask(self, file, percentile, return_img=False):
         frame_no = self.exc_scheme.find("o")
         with pims.open(str(self.data_dir / file)) as fr:
