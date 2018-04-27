@@ -135,7 +135,7 @@ class Filter:
             _bokeh_js_loaded = True
 
         dat = self.track_filters[key].tracks
-        dat0 = dat[(dat["fret", "has_neighbor"] == 1) &
+        dat0 = dat[(dat["fret", "has_neighbor"] == 0) &
                    (dat["donor", "frame"] == self.exc_scheme.find("d"))]
 
         ds = bokeh.models.ColumnDataSource(dat0)
