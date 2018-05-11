@@ -20,11 +20,11 @@ from .version import output_version
 
 
 class Tracker:
-    def __init__(self, don_o, acc_o, roi_shape, exc_scheme="da",
+    def __init__(self, don_o, acc_o, roi_size, exc_scheme="da",
                  data_dir=""):
         self.rois = dict(
-            donor=roi.ROI(don_o, shape=roi_shape),
-            acceptor=roi.ROI(acc_o, shape=roi_shape))
+            donor=roi.ROI(don_o, size=roi_size),
+            acceptor=roi.ROI(acc_o, size=roi_size))
         self.tracker = SmFretTracker(exc_scheme)
         self.exc_img_filter = FretImageSelector(exc_scheme)
         self.img = collections.OrderedDict()
