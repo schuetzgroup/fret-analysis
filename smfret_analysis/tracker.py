@@ -131,15 +131,16 @@ class Tracker:
                     overlay = self.donor_sum(fr)
                     for o in overlay:
                         o[o < 1] = 1
-                    lo_d = daostorm_3d.batch(overlay, **self.donor_loc_options)
+                    lo = daostorm_3d.batch(overlay, **self.donor_loc_options)
                     acc_fr = list(self.rois["acceptor"](
                         self.exc_img_filter(fr, "a")))
-                    for a in acc_fr:
-                        a[a < 1] = 1
-                    lo_a = daostorm_3d.batch(acc_fr,
-                                             **self.acceptor_loc_options)
-                    lo = pd.concat([lo_d, lo_a]).sort_values("frame")
-                    lo = lo.reset_index(drop=True)
+                    if len(acc_fr):
+                        for a in acc_fr:
+                            a[a < 1] = 1
+                        lo_a = daostorm_3d.batch(acc_fr,
+                                                 **self.acceptor_loc_options)
+                        lo = pd.concat([lo, lo_a]).sort_values("frame")
+                        lo = lo.reset_index(drop=True)
 
                     # correct for the fact that locating happend in the
                     # acceptor ROI
