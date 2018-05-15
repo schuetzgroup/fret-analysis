@@ -227,6 +227,7 @@ class Tracker:
         ret.donor_loc_options = cfg["loc_options"]["donor"]
         ret.acceptor_loc_options = cfg["loc_options"]["acceptor"]
         ret.tracker = cfg["tracker"]
+        ret.exc_img_filter = FretImageSelector(ret.tracker.excitation_seq)
         ret.data_dir = data_dir
 
         do_load = []
