@@ -303,7 +303,7 @@ class Filter:
 
         yadict = {}
         for k, v in self.beam_shapes.items():
-            if v is None:
+            if v is None or v.fit_result is None:
                 continue
             res = {k2: float(v2)
                    for k2, v2 in v.fit_result.best_values.items()}
