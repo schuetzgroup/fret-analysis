@@ -71,14 +71,15 @@ class Filter:
 
         self.beam_shapes[k] = bs
 
-    def calc_beam_shape_bulk(self, files, channel="donor", gaussian_fit=True,
-                             frame=0):
+    def calc_beam_shape_bulk(self, files_re, channel="donor",
+                             gaussian_fit=True, frame=0):
+        files = io.get_files(files_re, self.data_dir)[0]
         imgs = []
         roi = self.rois[channel]
 
         for f in files:
             with pims.open(str(self.data_dir / f)) as fr:
-                imgs.append(roi(f[frame]))
+                imgs.append(roi(fr[frame]))
 
         self.beam_shapes[channel] = beam_shape.Corrector(
             imgs, gaussian_fit=gaussian_fit)
