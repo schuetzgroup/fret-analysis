@@ -37,18 +37,19 @@ class Filter:
 
         self.beam_shapes = {"donor": None, "acceptor": None}
 
-    def calc_beam_shape_sm(self, keys="all", channel="donor", weighted=False):
+    def calc_beam_shape_sm(self, keys="all", channel="donor", weighted=False,
+                           frame=None):
         if not len(keys):
             return
 
         if channel.startswith("d"):
             k = "donor"
             mk = "d_mass"
-            f = self.exc_scheme.find("d")
+            f = self.exc_scheme.find("d") if frame is None else frame
         elif channel.startswith("a"):
             k = "acceptor"
             mk = "a_mass"
-            f = self.exc_scheme.find("a")
+            f = self.exc_scheme.find("a") if frame is None else frame
         else:
             raise ValueError("Channel must be \"donor\" or \"acceptor\".")
 
