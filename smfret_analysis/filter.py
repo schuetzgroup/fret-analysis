@@ -37,7 +37,7 @@ class Filter:
 
         self.beam_shapes = {"donor": None, "acceptor": None}
 
-    def calc_beam_shape_sm(self, keys="all", channel="donor", weighted=True):
+    def calc_beam_shape_sm(self, keys="all", channel="donor", weighted=False):
         if not len(keys):
             return
 
