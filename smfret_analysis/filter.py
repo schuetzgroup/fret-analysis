@@ -123,7 +123,7 @@ class Filter:
             f.acceptor_bleach_step(brightness_thresh, truncate=True,
                                    penalty=cp_penalty)
 
-    def find_brightness_params(self, key):
+    def find_brightness_params(self, key, frame=None):
         import bokeh.plotting
         import bokeh.application as b_app
         import bokeh.application.handlers as b_hnd
@@ -134,9 +134,10 @@ class Filter:
                                            hide_banner=True)
             _bokeh_js_loaded = True
 
+        frame = self.exc_scheme.find("d") if frame is None else frame
         dat = self.track_filters[key].tracks
         dat0 = dat[(dat["fret", "has_neighbor"] == 0) &
-                   (dat["donor", "frame"] == self.exc_scheme.find("d"))]
+                   (dat["donor", "frame"] == frame)]
 
         ds = bokeh.models.ColumnDataSource(dat0)
         ds.data["file"] = [i[0] for i in ds.data["index"]]
@@ -233,10 +234,10 @@ class Filter:
         for f in self.track_filters.values():
             f.query(expr, mi_sep)
 
-    def present_at_start(self):
-        first_d = self.exc_scheme.find("d")
+    def present_at_start(self, frame=None):
+        frame = self.exc_scheme.find("d") if frame is None else frame
         for f in self.track_filters.values():
-            f.filter_particles(f"donor_frame == {first_d}")
+            f.filter_particles(f"donor_frame == {frame}")
 
     def load_cell_mask(self, file, percentile, return_img=False):
         frame_no = self.exc_scheme.find("o")
