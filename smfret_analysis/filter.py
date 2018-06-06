@@ -92,20 +92,24 @@ class Filter:
             f = self.track_filters[key]
             t = f.tracks
             t = t[t["fret", "particle"] == p]
-            t = t[t["fret", "exc_type"] ==
-                  fret.SmFretTracker.exc_type_nums["d"]]
+            td = t[t["fret", "exc_type"] ==
+                   fret.SmFretTracker.exc_type_nums["d"]]
+            ta = t[t["fret", "exc_type"] ==
+                   fret.SmFretTracker.exc_type_nums["a"]]
 
             fig, ax = plt.subplots(1, 3, figsize=(12, 4))
-            fs = t["donor", "frame"].values
-            dm = t["fret", "d_mass"].values
-            am = t["fret", "a_mass"].values
-            ef = t["fret", "eff"].values
-            hn = t["fret", "has_neighbor"].values
+            fd = td["donor", "frame"].values
+            dm = td["fret", "d_mass"].values
+            fa = ta["donor", "frame"].values
+            am = ta["fret", "a_mass"].values
+            ef = td["fret", "eff"].values
+            hn = td["fret", "has_neighbor"].values
 
-            cp_a = f.cp_detector.find_changepoints(am, pen)
-            changepoint.plot_changepoints(dm, cp_a, ax=ax[0])
-            changepoint.plot_changepoints(am, cp_a, ax=ax[1])
-            changepoint.plot_changepoints(ef, cp_a, ax=ax[2])
+            cp_a = f.cp_detector.find_changepoints(am, pen) - 1
+            cp_d = np.searchsorted(fd, fa[cp_a]) - 1
+            changepoint.plot_changepoints(dm, cp_d, time=fd, ax=ax[0])
+            changepoint.plot_changepoints(am, cp_a, time=fa, ax=ax[1])
+            changepoint.plot_changepoints(ef, cp_d, time=fd, ax=ax[2])
             axt1 = ax[1].twinx()
             axt1.plot(hn, c="C2", alpha=0.2)
             axt1.set_ylim(-0.05, 1.05)
