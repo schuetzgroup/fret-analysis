@@ -32,12 +32,13 @@ class Inspector:
             d_frames = np.nonzero(exc == "d")[0]
             a_frames = np.nonzero(exc == "a")[0]
 
-            fno_d = d_frames[frame]
-            fno_a = a_frames[np.nonzero(a_frames > fno_d)[0][0]]
-            fno_i = self.exc_scheme.find("o")
+            reps = frame // len(d_frames)
+            res = frame - reps * len(d_frames)
+            fno_d = reps * len(exc) + d_frames[res]
+            fno_a = (reps * len(exc) +
+                     a_frames[np.nonzero(a_frames > res)[0][0]])
 
             with pims.open(str(self.data_dir / fname)) as fr:
-                img_c = self.rois["donor"](fr[fno_i])
                 img_d = fr[fno_d]
                 img_a = fr[fno_a]
 
