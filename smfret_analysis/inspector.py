@@ -36,7 +36,7 @@ class Inspector:
             res = frame - reps * len(d_frames)
             fno_d = reps * len(exc) + d_frames[res]
             fno_a = (reps * len(exc) +
-                     a_frames[np.nonzero(a_frames > res)[0][0]])
+                     a_frames[np.nonzero(a_frames > d_frames[res])[0][0]])
 
             with pims.open(str(self.data_dir / fname)) as fr:
                 img_d = fr[fno_d]
