@@ -302,9 +302,14 @@ class Filter:
 
     def save_data(self, file_prefix="filtered"):
         outfile = self.data_dir / f"{file_prefix}-v{output_version:03}"
-        with pd.HDFStore(outfile.with_suffix(".h5")) as s:
-            for key, filt in self.track_filters.items():
-                s["{}_trc".format(key)] = filt.tracks
+
+        with warnings.catch_warnings():
+            import tables
+            warnings.simplefilter("ignore", tables.NaturalNameWarning)
+
+            with pd.HDFStore(outfile.with_suffix(".h5")) as s:
+                for key, filt in self.track_filters.items():
+                    s["{}_trc".format(key)] = filt.tracks
 
         yadict = {}
         for k, v in self.beam_shapes.items():

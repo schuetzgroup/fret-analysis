@@ -5,6 +5,7 @@ import subprocess
 import collections
 from contextlib import suppress
 from pathlib import Path
+import warnings
 
 import pandas as pd
 import numpy as np
@@ -207,11 +208,15 @@ class Tracker:
         with outfile.with_suffix(".yaml").open("w") as f:
             io.yaml.safe_dump(top, f)
 
-        with pd.HDFStore(outfile.with_suffix(".h5")) as s:
-            for key, loc in self.loc_data.items():
-                s["{}_loc".format(key)] = loc
-            for key, trc in self.track_data.items():
-                s["{}_trc".format(key)] = trc
+        with warnings.catch_warnings():
+            import tables
+            warnings.simplefilter("ignore", tables.NaturalNameWarning)
+
+            with pd.HDFStore(outfile.with_suffix(".h5")) as s:
+                for key, loc in self.loc_data.items():
+                    s["{}_loc".format(key)] = loc
+                for key, trc in self.track_data.items():
+                    s["{}_trc".format(key)] = trc
 
     @classmethod
     def load(cls, file_prefix="tracking", data_dir="", loc=True, tracks=True):
