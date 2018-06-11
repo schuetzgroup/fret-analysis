@@ -168,7 +168,8 @@ class Tracker:
             ret = []
             ret_keys = []
             new_p = 0  # Particle ID unique across files
-            for f in self.loc_data[key].index.levels[0].unique():
+            files = self.loc_data[key].index.remove_unused_levels().levels[0]
+            for f in files.unique():
                 loc = self.loc_data[key].loc[f].copy()
                 label.value = f"Tracking {f} ({cnt}/{num_files})"
                 cnt += 1
