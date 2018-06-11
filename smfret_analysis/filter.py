@@ -111,7 +111,7 @@ class Filter:
             changepoint.plot_changepoints(am, cp_a, time=fa, ax=ax[1])
             changepoint.plot_changepoints(ef, cp_d, time=fd, ax=ax[2])
             axt1 = ax[1].twinx()
-            axt1.plot(hn, c="C2", alpha=0.2)
+            axt1.plot(fd, hn, c="C2", alpha=0.2)
             axt1.set_ylim(-0.05, 1.05)
 
             ax[0].set_title("d_mass")
