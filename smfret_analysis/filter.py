@@ -107,9 +107,11 @@ class Filter:
 
             cp_a = f.cp_detector.find_changepoints(am, pen) - 1
             cp_d = np.searchsorted(fd, fa[cp_a]) - 1
-            changepoint.plot_changepoints(dm, cp_d, time=fd, ax=ax[0])
-            changepoint.plot_changepoints(am, cp_a, time=fa, ax=ax[1])
-            changepoint.plot_changepoints(ef, cp_d, time=fd, ax=ax[2])
+            if len(fd):
+                changepoint.plot_changepoints(dm, cp_d, time=fd, ax=ax[0])
+                changepoint.plot_changepoints(ef, cp_d, time=fd, ax=ax[2])
+            if len(fa):
+                changepoint.plot_changepoints(am, cp_a, time=fa, ax=ax[1])
             axt1 = ax[1].twinx()
             axt1.plot(fd, hn, c="C2", alpha=0.2)
             axt1.set_ylim(-0.05, 1.05)
