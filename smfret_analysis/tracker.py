@@ -81,7 +81,10 @@ class Tracker:
         self.tracker.chromatic_corr = cc
 
     def add_dataset(self, key, files_re):
-        self.img[key] = io.get_files(files_re, self.data_dir)[0]
+        files = io.get_files(files_re, self.data_dir)[0]
+        if not files:
+            warnings.warn(f"Empty dataset added: {key}")
+        self.img[key] = files
 
     def donor_sum(self, fr):
         fr = self.exc_img_filter(fr, "d")
