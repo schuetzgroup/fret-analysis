@@ -11,7 +11,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import pims
 
-from sdt import io, roi, fret, chromatic, beam_shape, changepoint, helper
+from sdt import io, roi, fret, chromatic, flatfield, changepoint, helper
 
 from .version import output_version
 from .tracker import Tracker
@@ -65,10 +65,10 @@ class Filter:
         data = [d[(d[k, "frame"] == f) & (d["fret", "interp"] == 0) &
                   (d["fret", "has_neighbor"] == 0)]
                 for d in data]
-        bs = beam_shape.Corrector(
-            *data, pos_columns=[(k, "x"), (k, "y")],
-            mass_column=("fret", mk), shape=img_shape,
-            density_weight=weighted)
+        bs = flatfield.Corrector(
+            *data, columns={"coords": [(k, "x"), (k, "y")],
+                            "mass": ("fret", mk)},
+            shape=img_shape, density_weight=weighted)
 
         self.beam_shapes[k] = bs
 
