@@ -273,16 +273,20 @@ class Filter:
             fig.tight_layout()
             plt.show()
 
-    def filter_cell_region(self, key, percentile):
+    def filter_cell_region(self, keys, percentile):
         if percentile <= 0:
             return
 
-        f = self.track_filters[key]
-        trc = f.tracks
+        if isinstance(keys, str):
+            keys = [keys]
 
-        files = np.unique(trc.index.levels[0])
-        mask = [(v, self.load_cell_mask(v, percentile)) for v in files]
-        f.image_mask(mask, channel="donor")
+        for k in keys:
+            f = self.track_filters[k]
+            trc = f.tracks
+
+            files = np.unique(trc.index.levels[0])
+            mask = [(v, self.load_cell_mask(v, percentile)) for v in files]
+            f.image_mask(mask, channel="donor")
 
     def find_beam_shape_thresh(self, channel):
         bs = self.beam_shapes[channel]
