@@ -82,7 +82,7 @@ class Filter:
             with pims.open(str(self.data_dir / f)) as fr:
                 imgs.append(roi(fr[frame]))
 
-        self.beam_shapes[channel] = beam_shape.Corrector(
+        self.beam_shapes[channel] = flatfield.Corrector(
             imgs, gaussian_fit=gaussian_fit)
 
     def find_acc_bleach_options(self, key):
