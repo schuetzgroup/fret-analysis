@@ -7,3 +7,4 @@ __pycache__
 *.kdev4
 /*.ipynb
 .directory
+/data
