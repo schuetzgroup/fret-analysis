@@ -200,7 +200,7 @@ class Tracker:
         for t in self.track_data.values():
             self.tracker.analyze(t)
 
-    def save_data(self, file_prefix="tracking"):
+    def save(self, file_prefix="tracking"):
         loc_options = collections.OrderedDict([
             ("donor", self.donor_loc_options),
             ("acceptor", self.acceptor_loc_options),
@@ -208,7 +208,7 @@ class Tracker:
         top = collections.OrderedDict(
             tracker=self.tracker, rois=self.rois, loc_options=loc_options,
             files=self.img, bead_files=self.bead_files)
-        outfile = self.data_dir / f"{file_prefix}-v{output_version:03}"
+        outfile = Path(f"{file_prefix}-v{output_version:03}")
         with outfile.with_suffix(".yaml").open("w") as f:
             io.yaml.safe_dump(top, f)
 
@@ -225,7 +225,7 @@ class Tracker:
     @classmethod
     def load(cls, file_prefix="tracking", data_dir="", loc=True, tracks=True):
         data_dir = Path(data_dir)
-        infile = data_dir / f"{file_prefix}-v{output_version:03}"
+        infile = Path(f"{file_prefix}-v{output_version:03}")
         with infile.with_suffix(".yaml").open() as f:
             cfg = io.yaml.safe_load(f)
         ret = cls([0, 0], [0, 0], [0, 0], "")

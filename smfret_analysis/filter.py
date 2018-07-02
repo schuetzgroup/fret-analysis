@@ -2,6 +2,7 @@ import contextlib
 import functools
 import warnings
 import collections
+from pathlib import Path
 
 import numpy as np
 from scipy import ndimage
@@ -306,8 +307,8 @@ class Filter:
         for v in self.track_filters.values():
             v.image_mask(mask, channel)
 
-    def save_data(self, file_prefix="filtered"):
-        outfile = self.data_dir / f"{file_prefix}-v{output_version:03}"
+    def save(self, file_prefix="filtered"):
+        outfile = Path(f"{file_prefix}-v{output_version:03}")
 
         with warnings.catch_warnings():
             import tables
