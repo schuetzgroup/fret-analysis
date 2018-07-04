@@ -41,6 +41,13 @@ def cell_mask_otsu(img, factor, smoothing=(5, 5)):
     return mask.astype(bool)
 
 
+class StatItem:
+    def __init__(self, op, n_before, n_after):
+        self.op = op
+        self.n_before = n_before
+        self.n_after = n_after
+
+
 class Filter:
     def __init__(self, file_prefix="tracking", data_dir=""):
         tr = Tracker.load(file_prefix, loc=False, data_dir=data_dir)
@@ -55,6 +62,8 @@ class Filter:
         self.profile_images = tr.profile_images
 
         self.beam_shapes = {"donor": None, "acceptor": None}
+
+        self.statistics = {k: [] for k in self.track_filters.keys()}
 
     def calc_beam_shape_sm(self, keys="all", channel="donor", weighted=False,
                            frame=None):
@@ -137,9 +146,12 @@ class Filter:
             plt.show()
 
     def filter_acc_bleach(self, cp_penalty, brightness_thresh):
-        for f in self.track_filters.values():
+        for k, f in self.track_filters.items():
+            b = len(f.tracks)
             f.acceptor_bleach_step(brightness_thresh, truncate=True,
                                    penalty=cp_penalty)
+            a = len(f.tracks)
+            self.statistics[k].append(StatItem("acc bleach", b, a))
 
     def find_brightness_params(self, key, frame=None):
         import bokeh.plotting
@@ -249,13 +261,19 @@ class Filter:
         bokeh.plotting.show(app)
 
     def query(self, expr, mi_sep="_"):
-        for f in self.track_filters.values():
+        for k, f in self.track_filters.items():
+            b = len(f.tracks)
             f.query(expr, mi_sep)
+            a = len(f.tracks)
+            self.statistics[k].append(StatItem("query", b, a))
 
     def present_at_start(self, frame=None):
         frame = self.exc_scheme.find("d") if frame is None else frame
-        for f in self.track_filters.values():
+        for k, f in self.track_filters.items():
+            b = len(f.tracks)
             f.filter_particles(f"donor_frame == {frame}")
+            a = len(f.tracks)
+            self.statistics[k].append(StatItem("at start", b, a))
 
     def load_cell_mask(self, file, return_img=False, method=cell_mask_a_thresh,
                        **kwargs):
@@ -306,15 +324,19 @@ class Filter:
 
     def apply_cell_masks(self, method="a_thresh", **kwargs):
         for k, v in self.sources.items():
-            if not v["cells"]:
-                continue
             filt = self.track_filters[k]
-            trc = filt.tracks
+            b = len(filt.tracks)
 
-            files = np.unique(trc.index.levels[0])
-            mask = [(f, self.load_cell_mask(f, method=method, **kwargs))
-                    for f in files]
-            filt.image_mask(mask, channel="donor")
+            if v["cells"]:
+                trc = filt.tracks
+
+                files = np.unique(trc.index.levels[0])
+                mask = [(f, self.load_cell_mask(f, method=method, **kwargs))
+                        for f in files]
+                filt.image_mask(mask, channel="donor")
+
+            a = len(filt.tracks)
+            self.statistics[k].append(StatItem("cell mask", b, a))
 
     def find_beam_shape_thresh(self, channel):
         bs = self.beam_shapes[channel]
@@ -331,8 +353,11 @@ class Filter:
 
     def filter_beam_shape_region(self, channel, thresh):
         mask = self.beam_shapes[channel].corr_img * 100 > thresh
-        for v in self.track_filters.values():
-            v.image_mask(mask, channel)
+        for k, f in self.track_filters.items():
+            b = len(f.tracks)
+            f.image_mask(mask, channel)
+            a = len(f.tracks)
+            self.statistics[k].append(StatItem("beam shape", b, a))
 
     def save(self, file_prefix="filtered"):
         outfile = Path(f"{file_prefix}-v{output_version:03}")
@@ -356,3 +381,27 @@ class Filter:
         with outfile.with_suffix(".yaml").open("w") as f:
             io.yaml.safe_dump(dict(beam_shapes=yadict), f,
                               default_flow_style=False)
+
+    def show_statistics(self, key):
+        fig, ax = plt.subplots()
+        data = self.statistics[key]
+
+        x = [d.op for d in data]
+        y = [(d.n_before - d.n_after) / d.n_before for d in data]
+        c = ["C0"] * len(x)
+
+        x.append("total")
+        y.append(1 - np.prod(1 - np.array(y)))
+        c.append("C1")
+
+        for i, v in enumerate(y):
+            if not v:
+                continue
+            ax.text(i, v - 0.02, f"{v:.3f}", ha="center", va="top",
+                    color="white", weight="bold")
+
+
+        ax.bar(x, y, color=c)
+        ax.set_xlabel("operation")
+        ax.set_ylabel("discarded fraction")
+        fig.autofmt_xdate()
