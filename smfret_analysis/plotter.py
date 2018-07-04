@@ -1,5 +1,6 @@
 import math
 from pathlib import Path
+from collections import OrderedDict
 
 import numpy as np
 import pandas as pd
@@ -12,7 +13,7 @@ from .version import output_version
 
 class Plotter:
     def __init__(self, file_prefix="filtered", data_dir=""):
-        self.track_data = {}
+        self.track_data = OrderedDict()
         self.data_dir = Path(data_dir)
         infile = Path(f"{file_prefix}-v{output_version:03}.h5")
         with pd.HDFStore(infile, "r") as s:
