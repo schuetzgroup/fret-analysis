@@ -10,8 +10,8 @@ from .tracker import Tracker
 
 
 class Inspector:
-    def __init__(self, file_prefix="tracking", data_dir=""):
-        tr = Tracker.load(file_prefix, loc=False, data_dir=data_dir)
+    def __init__(self, file_prefix="tracking"):
+        tr = Tracker.load(file_prefix, loc=False)
         self.track_data = tr.track_data
         self.exc_scheme = "".join(tr.tracker.excitation_seq)
         self.rois = tr.rois

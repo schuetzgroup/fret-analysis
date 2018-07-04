@@ -49,8 +49,8 @@ class StatItem:
 
 
 class Filter:
-    def __init__(self, file_prefix="tracking", data_dir=""):
-        tr = Tracker.load(file_prefix, loc=False, data_dir=data_dir)
+    def __init__(self, file_prefix="tracking"):
+        tr = Tracker.load(file_prefix, loc=False)
         self.rois = tr.rois
         self.cc = tr.tracker.chromatic_corr
         self.track_filters = {k: fret.SmFretFilter(v)

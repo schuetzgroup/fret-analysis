@@ -246,7 +246,8 @@ class Tracker:
             ("beads", self.bead_loc_options)])
         top = collections.OrderedDict(
             tracker=self.tracker, rois=self.rois, loc_options=loc_options,
-            sources=self.sources, bead_files=self.bead_files)
+            data_dir=str(self.data_dir), sources=self.sources,
+            bead_files=self.bead_files)
         outfile = Path(f"{file_prefix}-v{output_version:03}")
         with outfile.with_suffix(".yaml").open("w") as f:
             io.yaml.safe_dump(top, f)
@@ -267,8 +268,8 @@ class Tracker:
                             **self.profile_images)
 
     @classmethod
-    def load(cls, file_prefix="tracking", data_dir="", loc=True, tracks=True):
-        data_dir = Path(data_dir)
+    def load(cls, file_prefix="tracking", loc=True, tracks=True,
+             cell_images=True, profile_images=True):
         infile = Path(f"{file_prefix}-v{output_version:03}")
         with infile.with_suffix(".yaml").open() as f:
             cfg = io.yaml.safe_load(f)
@@ -281,7 +282,7 @@ class Tracker:
         ret.acceptor_loc_options = cfg["loc_options"]["acceptor"]
         ret.tracker = cfg["tracker"]
         ret.exc_img_filter = FretImageSelector(ret.tracker.excitation_seq)
-        ret.data_dir = data_dir
+        ret.data_dir = Path(cfg["data_dir"])
 
         do_load = []
         if loc:
@@ -295,20 +296,22 @@ class Tracker:
                     new_key = k[1:-len(suffix)]
                     sink[new_key] = s[k]
 
-        cell_img_file = infile.with_suffix(".cell_img.npz")
-        try:
-            with np.load(cell_img_file) as data:
-                ret.cell_images = collections.OrderedDict(data)
-        except Exception:
-            warnings.warn("Could not load cell images from file "
-                          f"\"{str(cell_img_file)}\".")
-        profile_img_file = infile.with_suffix(".profile_img.npz")
-        try:
-            with np.load(profile_img_file) as data:
-                ret.profile_images = collections.OrderedDict(data)
-        except Exception:
-            warnings.warn("Could not load cell images from file "
-                          f"\"{str(profile_img_file)}\".")
+        if cell_images:
+            cell_img_file = infile.with_suffix(".cell_img.npz")
+            try:
+                with np.load(cell_img_file) as data:
+                    ret.cell_images = collections.OrderedDict(data)
+            except Exception:
+                warnings.warn("Could not load cell images from file "
+                            f"\"{str(cell_img_file)}\".")
+            profile_img_file = infile.with_suffix(".profile_img.npz")
+        if profile_images:
+            try:
+                with np.load(profile_img_file) as data:
+                    ret.profile_images = collections.OrderedDict(data)
+            except Exception:
+                warnings.warn("Could not load cell images from file "
+                            f"\"{str(profile_img_file)}\".")
 
         return ret
 

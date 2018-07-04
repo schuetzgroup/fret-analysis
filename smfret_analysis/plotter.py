@@ -12,9 +12,8 @@ from .version import output_version
 
 
 class Plotter:
-    def __init__(self, file_prefix="filtered", data_dir=""):
+    def __init__(self, file_prefix="filtered"):
         self.track_data = OrderedDict()
-        self.data_dir = Path(data_dir)
         infile = Path(f"{file_prefix}-v{output_version:03}.h5")
         with pd.HDFStore(infile, "r") as s:
             for k in s.keys():
