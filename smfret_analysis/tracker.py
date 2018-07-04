@@ -282,7 +282,7 @@ class Tracker:
         ret.acceptor_loc_options = cfg["loc_options"]["acceptor"]
         ret.tracker = cfg["tracker"]
         ret.exc_img_filter = FretImageSelector(ret.tracker.excitation_seq)
-        ret.data_dir = Path(cfg["data_dir"])
+        ret.data_dir = Path(cfg.get("data_dir", ""))
 
         do_load = []
         if loc:
