@@ -9,7 +9,7 @@ try:
 except Exception:
     git_desc = "unknown"
 
-__version__ = "2.0"
+__version__ = "2.1"
 output_version = 8
 
 
