@@ -9,8 +9,8 @@ try:
 except Exception:
     git_desc = "unknown"
 
-__version__ = "1.0"
-output_version = 7
+__version__ = "2.0.dev"
+output_version = 8
 
 
 def print_info():

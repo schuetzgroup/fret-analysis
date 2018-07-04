@@ -11,6 +11,7 @@ import ipywidgets
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import pims
+import cv2
 
 from sdt import io, roi, fret, chromatic, flatfield, changepoint, helper
 
@@ -21,9 +22,23 @@ from .tracker import Tracker
 _bokeh_js_loaded = False
 
 
-def get_cell_region(img, percentile=85):
-    r = ndimage.binary_opening(img > np.percentile(img, percentile))
-    return ndimage.binary_fill_holes(r)
+def cell_mask_a_thresh(img, block_size, c, smoothing=(5, 5)):
+    scaled = img - img.min()
+    scaled = scaled / scaled.max() * 255
+    blur = cv2.GaussianBlur(scaled.astype(np.uint8), smoothing, 0)
+    mask = cv2.adaptiveThreshold(blur, 1, cv2.ADAPTIVE_THRESH_MEAN_C,
+                                 cv2.THRESH_BINARY, 2*block_size+1, c)
+    return mask.astype(bool)
+
+
+def cell_mask_otsu(img, factor, smoothing=(5, 5)):
+    scaled = img - img.min()
+    scaled = scaled / scaled.max() * 255
+    blur = cv2.GaussianBlur(scaled.astype(np.uint8), smoothing, 0)
+    thresh, mask = cv2.threshold(blur, 0, 1,
+                                 cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    thresh2, mask = cv2.threshold(blur, thresh * factor, 1, cv2.THRESH_BINARY)
+    return mask.astype(bool)
 
 
 class Filter:
@@ -35,6 +50,9 @@ class Filter:
                               for k, v in tr.track_data.items()}
         self.exc_scheme = "".join(tr.tracker.excitation_seq)
         self.data_dir = tr.data_dir
+        self.sources = tr.sources
+        self.cell_images = tr.cell_images
+        self.profile_images = tr.profile_images
 
         self.beam_shapes = {"donor": None, "acceptor": None}
 
@@ -73,22 +91,13 @@ class Filter:
 
         self.beam_shapes[k] = bs
 
-    def calc_beam_shape_bulk(self, files_re, channel="donor",
-                             gaussian_fit=True, frame=0):
-        files = io.get_files(files_re, self.data_dir)[0]
-        imgs = []
-        roi = self.rois[channel]
-
-        for f in files:
-            with pims.open(str(self.data_dir / f)) as fr:
-                imgs.append(roi(fr[frame]))
-
+    def calc_beam_shape_bulk(self, channel="donor", gaussian_fit=True):
         self.beam_shapes[channel] = flatfield.Corrector(
-            imgs, gaussian_fit=gaussian_fit)
+            self.profile_images[channel], gaussian_fit=gaussian_fit)
 
     def find_acc_bleach_options(self, key):
         @ipywidgets.interact(p=ipywidgets.IntText(0),
-                             pen=ipywidgets.FloatText(1e6))
+                             pen=ipywidgets.FloatText(2e7))
         def show_track(p, pen):
             f = self.track_filters[key]
             t = f.tracks
@@ -248,46 +257,64 @@ class Filter:
         for f in self.track_filters.values():
             f.filter_particles(f"donor_frame == {frame}")
 
-    def load_cell_mask(self, file, percentile, return_img=False):
-        frame_no = self.exc_scheme.find("o")
-        with pims.open(str(self.data_dir / file)) as fr:
-            img = self.rois["donor"](fr[frame_no])
-        mask = get_cell_region(img, percentile)
+    def load_cell_mask(self, file, return_img=False, method=cell_mask_a_thresh,
+                       **kwargs):
+        if isinstance(method, str):
+            method = globals()["cell_mask_" + method]
+        img = self.cell_images[file][0]  # Use first cell image
+        mask = method(img, **kwargs)
         if return_img:
             return mask, img
         else:
             return mask
 
-    def find_cell_thresh(self, key):
+    def _plot_cell_thresh(self, mask, img):
+        fig, (ax1, ax2) = plt.subplots(1, 2)
+        i1 = img.copy()
+        i1[~mask] = 0
+        i2 = img.copy()
+        i2[mask] = 0
+        imax = img.max() / 2
+        ax1.imshow(i1, vmax=imax)
+        ax2.imshow(i2, vmax=imax)
+
+        fig.tight_layout()
+        plt.show()
+
+    def find_cell_mask_params(self, key, method="a_thresh"):
         fw = ipywidgets.Dropdown(
             options=self.track_filters[key].tracks.index.levels[0].unique())
-        pw = ipywidgets.BoundedIntText(value=85, min=0, max=100)
 
-        @ipywidgets.interact(file=fw, percentile=pw)
-        def show_cell(file, percentile):
-            mask, img = self.load_cell_mask(file, percentile, return_img=True)
+        if method == "a_thresh":
+            bs = ipywidgets.IntText(value=65)
+            cw = ipywidgets.IntText(value=-5)
 
-            fig, (ax1, ax2) = plt.subplots(1, 2)
-            ax1.imshow(img)
-            ax2.imshow(mask)
+            @ipywidgets.interact(file=fw, block_size=bs, c=cw)
+            def show_cell(file, block_size, c):
+                mask, img = self.load_cell_mask(
+                    file, return_img=True, method=method,
+                    block_size=block_size, c=c)
+                self._plot_cell_thresh(mask, img)
+        elif method == "otsu":
+            faw = ipywidgets.FloatText(value=1., step=0.01)
 
-            fig.tight_layout()
-            plt.show()
+            @ipywidgets.interact(file=fw, factor=faw)
+            def show_cell(file, factor):
+                mask, img = self.load_cell_mask(
+                    file, return_img=True, method=method, factor=factor)
+                self._plot_cell_thresh(mask, img)
 
-    def filter_cell_region(self, keys, percentile):
-        if percentile <= 0:
-            return
-
-        if isinstance(keys, str):
-            keys = [keys]
-
-        for k in keys:
-            f = self.track_filters[k]
-            trc = f.tracks
+    def apply_cell_masks(self, method="a_thresh", **kwargs):
+        for k, v in self.sources.items():
+            if not v["cells"]:
+                continue
+            filt = self.track_filters[k]
+            trc = filt.tracks
 
             files = np.unique(trc.index.levels[0])
-            mask = [(v, self.load_cell_mask(v, percentile)) for v in files]
-            f.image_mask(mask, channel="donor")
+            mask = [(f, self.load_cell_mask(f, method=method, **kwargs))
+                    for f in files]
+            filt.image_mask(mask, channel="donor")
 
     def find_beam_shape_thresh(self, channel):
         bs = self.beam_shapes[channel]
