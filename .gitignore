@@ -11,4 +11,5 @@ __pycache__
 # Whitelist things that should be in git
 !/notebooks
 !/smfret_analysis
+!/scripts
 !/README.md
