@@ -103,7 +103,7 @@ class Inspector:
             print(t["fret", "eff"].mean())
             plt.show()
 
-    def raw_features(self, key, particle, figsize=None, colums=8,
+    def raw_features(self, key, particle, figsize=None, n_cols=8,
                      img_size=3):
         t = self.track_data[key]
         t0 = t[t["fret", "particle"] == particle]
@@ -116,7 +116,7 @@ class Inspector:
             acc_img = self.rois["acceptor"](img)
 
             fret.draw_track(t0, particle, don_img, acc_img, img_size,
-                            columns=colums, figure=fig)
+                            n_cols=n_cols, figure=fig)
 
     def show_all_tracks(self, key):
         dat = self.track_data[key]
