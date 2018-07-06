@@ -310,7 +310,7 @@ class Tracker:
                 with np.load(profile_img_file) as data:
                     ret.profile_images = collections.OrderedDict(data)
             except Exception:
-                warnings.warn("Could not load cell images from file "
+                warnings.warn("Could not load profile images from file "
                             f"\"{str(profile_img_file)}\".")
 
         return ret
