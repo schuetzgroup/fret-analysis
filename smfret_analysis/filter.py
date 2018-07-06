@@ -105,12 +105,16 @@ class Filter:
             self.profile_images[channel], gaussian_fit=gaussian_fit)
 
     def find_acc_bleach_options(self, key):
+        f = self.track_filters[key]
+        trc = f.tracks
+        particles = np.sort(trc["fret", "particle"].unique())
+
         @ipywidgets.interact(p=ipywidgets.IntText(0),
                              pen=ipywidgets.FloatText(2e7))
         def show_track(p, pen):
-            f = self.track_filters[key]
-            t = f.tracks
-            t = t[t["fret", "particle"] == p]
+            pi = particles[p]
+            print(f"particle {pi}")
+            t = trc[trc["fret", "particle"] == pi]
             td = t[t["fret", "exc_type"] ==
                    fret.SmFretTracker.exc_type_nums["d"]]
             ta = t[t["fret", "exc_type"] ==
