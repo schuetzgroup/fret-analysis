@@ -189,9 +189,13 @@ class Tracker:
                     if image_filter is not None:
                         img = image_filter(img)
 
-                    d = self.tracker.track(
-                        self.rois["donor"](img), self.rois["acceptor"](img),
-                        don_loc, acc_loc)
+                    try:
+                        d = self.tracker.track(
+                            self.rois["donor"](img),
+                            self.rois["acceptor"](img),
+                            don_loc, acc_loc)
+                    except Exception as e:
+                        warnings.warn(f"Tracking failed for {f}. Reason: {e}")
                 ps = d["fret", "particle"].copy().values
                 for p in np.unique(ps):
                     d.loc[ps == p, ("fret", "particle")] = new_p
