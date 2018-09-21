@@ -1,7 +1,10 @@
+from contextlib import suppress
+
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import ipywidgets
+from IPython.display import display
 import pims
 
 from sdt import fret, helper
@@ -17,16 +20,39 @@ class Inspector:
         self.rois = tr.rois
         self.data_dir = tr.data_dir
 
-    def mark_track(self, key):
-        @ipywidgets.interact(
-            particle=ipywidgets.IntText(value=0),
-            eff_thresh=ipywidgets.BoundedFloatText(min=0, max=1, value=0.6),
-            frame=ipywidgets.IntText(value=0))
-        def show_track(particle, frame, eff_thresh):
-            df = self.track_data[key]
+    def make_dataset_selector(self, state, callback):
+        d_sel = ipywidgets.Dropdown(options=list(self.track_data.keys()),
+                                    description="dataset")
+
+        def change_dataset(key=None):
+            tr = self.track_data[d_sel.value]
+            state["tr"] = tr
+            state["pnos"] = tr["fret", "particle"].unique()
+            state["files"] = tr.index.remove_unused_levels().levels[0].unique()
+
+            callback()
+
+        d_sel.observe(change_dataset, names="value")
+        change_dataset()
+
+        return d_sel
+
+
+    def mark_track(self):
+        state = {}
+
+        fig, (ax_d, ax_a, ax_aa) = plt.subplots(1, 3, figsize=(9, 4))
+        p_sel = ipywidgets.IntText(description="particle")
+        f_sel = ipywidgets.IntText(description="frame")
+        fname_label = ipywidgets.Label()
+
+        def show_track(arg=None):
+            particle = state["pnos"][p_sel.value]
+            frame = f_sel.value
+            df = state["tr"]
             df = df[df["fret", "particle"] == particle]
             fname = df.iloc[0].name[0]
-            print(fname)
+            fname_label.value = fname
 
             exc = np.array(list(self.exc_scheme))
             d_frames = np.nonzero(exc == "d")[0]
@@ -42,9 +68,8 @@ class Inspector:
                 img_d = fr[fno_d]
                 img_a = fr[fno_a]
 
-            fig, (ax_d, ax_a, ax_aa) = plt.subplots(1, 3, figsize=(15, 10))
-
             for a in (ax_d, ax_a, ax_aa):
+                a.cla()
                 a.axis("off")
 
             ax_d.set_title("donor")
@@ -63,95 +88,139 @@ class Inspector:
             df_a = df[df["acceptor", "frame"] == fno_a]
             mask_d = np.ones(len(df_d), dtype=bool)
             mask_a = np.ones(len(df_a), dtype=bool)
-            eff_mask = df_d["fret", "eff"] < eff_thresh
             df_dd = df_d["donor"]
             df_da = df_d["acceptor"]
             df_aa = df_a["acceptor"]
 
-            if particle >= 0:
-                mask_d &= df_d["fret", "particle"] == particle
-                mask_a &= df_a["fret", "particle"] == particle
-            ax_d.scatter(df_dd.loc[mask_d & eff_mask, "x"],
-                         df_dd.loc[mask_d & eff_mask, "y"],
-                         s=100, facecolor="none", edgecolor="red")
-            ax_a.scatter(df_da.loc[mask_d & eff_mask, "x"],
-                         df_da.loc[mask_d & eff_mask, "y"],
-                         s=100, facecolor="none", edgecolor="red")
-            ax_d.scatter(df_dd.loc[mask_d & ~eff_mask, "x"],
-                         df_dd.loc[mask_d & ~eff_mask, "y"],
+            ax_d.scatter(df_dd.loc[mask_d, "x"],
+                         df_dd.loc[mask_d, "y"],
                          s=100, facecolor="none", edgecolor="yellow")
-            ax_a.scatter(df_da.loc[mask_d & ~eff_mask, "x"],
-                         df_da.loc[mask_d & ~eff_mask, "y"],
+            ax_a.scatter(df_da.loc[mask_d, "x"],
+                         df_da.loc[mask_d, "y"],
                          s=100, facecolor="none", edgecolor="yellow")
             ax_aa.scatter(df_aa.loc[mask_a, "x"], df_aa.loc[mask_a, "y"],
                           s=100, facecolor="none", edgecolor="yellow")
 
             fig.tight_layout()
-            plt.show()
+            fig.canvas.draw()
 
-    def show_track(self, key):
-        tr = self.track_data[key]
-        pnos = tr["fret", "particle"].unique()
+        p_sel.observe(show_track, "value")
+        f_sel.observe(show_track, "value")
 
-        @ipywidgets.interact(particle=ipywidgets.IntText(value=0))
-        def show_track(particle):
-            p = pnos[particle]
-            fig, ax = plt.subplots(figsize=(10, 10))
+        d_sel = self.make_dataset_selector(state, show_track)
+        box = ipywidgets.VBox([d_sel, p_sel, f_sel, fig.canvas, fname_label])
+        display(box)
+
+    def show_track(self):
+        state = {}
+
+        fig, ax = plt.subplots()
+        p_sel = ipywidgets.IntText(description="particle")
+        eff_label = ipywidgets.Label()
+
+        def show_track(particle=None):
+            ax.cla()
+            p = state["pnos"][p_sel.value]
+            tr = state["tr"]
             t = tr[tr["fret", "particle"] == p]
             c = ax.plot(t["donor", "x"], t["donor", "y"],
                         c=mpl.cm.jet(t["fret", "eff"].mean()), marker=".")
-            print(t["fret", "eff"].mean())
-            plt.show()
+            eff_label.value = f'Mean eff.: {t["fret", "eff"].mean()}'
+            fig.canvas.draw()
 
-    def raw_features(self, key, particle, figsize=None, n_cols=8,
-                     img_size=3):
-        t = self.track_data[key]
-        t0 = t[t["fret", "particle"] == particle]
-        fname = t0.index[0][0]
+        p_sel.observe(show_track, names="value")
 
-        fig = plt.figure(figsize=figsize)
+        d_sel = self.make_dataset_selector(state, show_track)
+        box = ipywidgets.VBox([d_sel, p_sel, fig.canvas, eff_label])
+        display(box)
 
-        with pims.open(str(self.data_dir / fname)) as img:
-            don_img = self.rois["donor"](img)
-            acc_img = self.rois["acceptor"](img)
+    def raw_features(self, figsize=(8, 8), n_cols=8, img_size=3):
+        state = {}
 
-            fret.draw_track(t0, particle, don_img, acc_img, img_size,
-                            n_cols=n_cols, figure=fig)
+        fig = plt.figure(figsize=(8, 8))
+        p_sel = ipywidgets.IntText(description="particle")
 
-    def show_all_tracks(self, key):
-        dat = self.track_data[key]
-        files = dat.index.levels[0].unique()
+        def draw(particle=None):
+            fig.clf()
+            tr = state["tr"]
+            t0 = tr[tr["fret", "particle"] == state["pnos"][p_sel.value]]
+            fname = t0.index[0][0]
 
-        @ipywidgets.interact(file=ipywidgets.Dropdown(options=files))
-        def plot(file):
-            fig, ax = plt.subplots(figsize=(8, 8))
+            with pims.open(str(self.data_dir / fname)) as img:
+                don_img = self.rois["donor"](img)
+                acc_img = self.rois["acceptor"](img)
 
-            d = dat.loc[file]
+                fret.draw_track(t0, p_sel.value, don_img, acc_img, img_size,
+                                n_cols=n_cols, figure=fig)
+            fig.canvas.draw()
+
+        p_sel.observe(draw, names="value")
+
+        d_sel = self.make_dataset_selector(state, draw)
+        box = ipywidgets.VBox([d_sel, p_sel, fig.canvas])
+        display(box)
+
+    def show_all_tracks(self):
+        state = {}
+        fig, ax = plt.subplots(figsize=(8, 8))
+        f_sel = ipywidgets.Dropdown(description="file")
+
+        def fill_f_sel():
+            f_sel.options = state["files"]
+
+        def plot(file=None):
+            ax.cla()
+            d = state["tr"].loc[f_sel.value]
             for p, trc in helper.split_dataframe(
                     d, ("fret", "particle"),
                     [("donor", "x"), ("donor", "y")]):
                 ax.plot(trc[:, 0], trc[:, 1])
                 ax.text(*trc[0], str(p))
-            plt.show()
+            fig.canvas.draw()
 
-    def plot_tracks(self, key, particles, axes):
-        data = self.track_data[key]
-        fig, ax = plt.subplots(1, len(axes), figsize=(10, 5))
+        f_sel.observe(plot, "value")
 
-        info = []
-        for p in particles:
-            d = data[(data["fret", "particle"] == p) &
-                     (data["fret", "exc_type"] == 0)]
-            for a, (x, y) in zip(ax, axes):
-                a.plot(d[x], d[y], ".-")
-                a.set_xlabel(" ".join(x))
-                a.set_ylabel(" ".join(y))
-            info.append("particle {}: start {}, end {}".format(
-                p, d["donor", "frame"].min(), d["donor", "frame"].max()))
+        d_sel = self.make_dataset_selector(state, fill_f_sel)
+        box = ipywidgets.VBox([d_sel, f_sel, fig.canvas])
+        display(box)
 
-        for a in ax.flatten():
-            a.grid()
+    def plot_tracks(self, *axes):
+        state = {}
 
-        fig.tight_layout()
-        plt.show()
-        print("\n".join(info))
+        p_sel = ipywidgets.Text(description="particle")
+        fig, ax = plt.subplots(1, len(axes), figsize=(8, 4))
+        info_label = ipywidgets.HTML()
+
+        def plot_data(particle=None):
+            for a in ax:
+                a.cla()
+                a.grid()
+
+            particles = []
+            for i in p_sel.value.split():
+                with suppress(ValueError):
+                    particles.append(int(i))
+
+            info = []
+
+            data = state["tr"]
+            for p in particles:
+                d = data[(data["fret", "particle"] == p) &
+                        (data["fret", "exc_type"] == 0)]
+                for a, (x, y) in zip(ax, axes):
+                    a.plot(d[x], d[y], ".-")
+                    a.set_xlabel(" ".join(x))
+                    a.set_ylabel(" ".join(y))
+                info.append("particle {}: start {}, end {}".format(
+                    p, d["donor", "frame"].min(), d["donor", "frame"].max()))
+
+            info_label.value = "<br />".join(info)
+
+            fig.tight_layout()
+            fig.canvas.draw()
+
+        p_sel.observe(plot_data, names="value")
+
+        d_sel = self.make_dataset_selector(state, plot_data)
+        box = ipywidgets.VBox([d_sel, p_sel, fig.canvas, info_label])
+        display(box)
