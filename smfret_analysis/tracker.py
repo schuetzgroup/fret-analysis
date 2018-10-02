@@ -13,12 +13,17 @@ import ipywidgets
 import pims
 import matplotlib.pyplot as plt
 
-from sdt import roi, chromatic, io, image
+from sdt import roi, chromatic, io, image, fret, changepoint, helper
 from sdt.fret import SmFretTracker, FretImageSelector
 from sdt.loc import daostorm_3d
 from sdt.nbui import Locator
 
 from .version import output_version
+
+
+@helper.pipeline(ancestor_count=2)
+def _img_sum(d, a):
+    return d + a
 
 
 class Tracker:
@@ -30,89 +35,110 @@ class Tracker:
         self.tracker = SmFretTracker(exc_scheme)
         self.exc_img_filter = FretImageSelector(exc_scheme)
         self.sources = collections.OrderedDict()
+
         self.loc_data = collections.OrderedDict()
         self.track_data = collections.OrderedDict()
         self.cell_images = collections.OrderedDict()
         self.profile_images = collections.OrderedDict()
         self.data_dir = Path(data_dir)
 
-        self.bead_files = []
-        self.bead_locator = None
-        self.bead_loc_options = None
+        self.locators = collections.OrderedDict([
+            ("donor", Locator()), ("acceptor", Locator()),
+            ("beads", Locator())])
 
-        self.donor_locator = None
-        self.donor_loc_options = None
+    def _make_dataset_selector(self, state, callback):
+        d_sel = ipywidgets.Dropdown(options=list(self.track_data.keys()),
+                                    description="dataset")
 
-        self.acceptor_locator = None
-        self.acceptor_loc_options = None
+        def change_dataset(key=None):
+            tr = self.track_data[d_sel.value]
+            state["tr"] = tr
+            state["pnos"] = sorted(tr["fret", "particle"].unique())
+            state["files"] = tr.index.remove_unused_levels().levels[0].unique()
 
-    def set_bead_loc_opts(self, files_re=None):
-        if files_re is not None:
-            self.bead_files = io.get_files(files_re, self.data_dir)[0]
-        self.bead_locator = Locator([str(self.data_dir / f)
-                                     for f in self.bead_files])
-        if isinstance(self.bead_loc_options, dict):
-            self.bead_locator.set_options(**self.bead_loc_options)
+            callback()
+
+        d_sel.observe(change_dataset, names="value")
+        change_dataset()
+
+        return d_sel
+
+    def add_dataset(self, key, files_re, cells=False):
+        files = io.get_files(files_re, self.data_dir)[0]
+        if not files:
+            warnings.warn(f"Empty dataset added: {key}")
+        s = collections.OrderedDict(
+            [("files", self._open_image_sequences(files)), ("cells", cells)])
+        self.sources[key] = s
+
+    def set_bead_loc_opts(self, files_re):
+        files = io.get_files(files_re, self.data_dir)[0]
+        self.locators["beads"].files = \
+            {f: pims.open(str(self.data_dir / f)) for f in files}
+        self.locators["beads"].auto_scale()
+        return self.locators["beads"]
 
     def make_chromatic(self, plot=True, max_frame=None, params={}):
-        if self.bead_locator is not None:
-            self.bead_loc_options = self.bead_locator.get_options()
-        if self.bead_loc_options is None:
-            raise RuntimeError("Localization options not set. Either set the"
-                               "`bead_loc_options` dict or use the "
-                               "`set_bead_loc_opts` method.")
-
         label = ipywidgets.Label(value="Starting…")
         display(label)
 
         bead_loc = []
-        for n, f in enumerate(self.bead_files):
-            label.value = f"Locating beads (file {n+1}/{len(self.bead_files)})"
-            with pims.open(str(self.data_dir / f)) as i:
-                bead_loc.append(daostorm_3d.batch(
-                    i[:max_frame], **self.bead_loc_options))
+        lcr = self.locators["beads"]
+        n_files = len(lcr.files)
+        for n, (f, i) in enumerate(self.locators["beads"].files.items()):
+            label.value = f"Locating beads (file {n+1}/{n_files})"
+            bead_loc.append(lcr.batch_func(
+                i[:max_frame], **lcr.options))
         label.layout = ipywidgets.Layout(display="none")
 
         acc_beads = [self.rois["acceptor"](l) for l in bead_loc]
         don_beads = [self.rois["donor"](l) for l in bead_loc]
         cc = chromatic.Corrector(don_beads, acc_beads)
         cc.determine_parameters(**params)
-
-        if plot:
-            cc.test()
-
         self.tracker.chromatic_corr = cc
 
-    def add_dataset(self, key, files_re, cells=False):
-        files = io.get_files(files_re, self.data_dir)[0]
-        if not files:
-            warnings.warn(f"Empty dataset added: {key}")
-        s = collections.OrderedDict([("files", files), ("cells", cells)])
-        self.sources[key] = s
+        if plot:
+            fig, ax = plt.subplots(1, 2)
+            cc.test(ax=ax)
+            return fig.canvas
+
+    def _open_image_sequences(self, files):
+        return collections.OrderedDict([(f, pims.open(str(self.data_dir / f)))
+                                        for f in files])
 
     def donor_sum(self, fr):
         fr = self.exc_img_filter(fr, "d")
-        fr_d = self.rois["donor"](fr)
+        fr_d = self.tracker.chromatic_corr(self.rois["donor"](fr), channel=1,
+                                           cval=np.mean)
         fr_a = self.rois["acceptor"](fr)
-        return [a + self.tracker.chromatic_corr(d, channel=1, cval=d.mean())
-                for d, a in zip(fr_d, fr_a)]
+        return _img_sum(fr_d, fr_a)
 
-    def set_don_loc_opts(self, key, idx):
-        i_name = self.sources[key]["files"][idx]
-        with pims.open(str(self.data_dir / i_name)) as fr:
-            lo = {i_name: self.donor_sum(fr)}
-        self.donor_locator = Locator(lo)
-        if isinstance(self.donor_loc_options, dict):
-            self.donor_locator.set_options(**self.donor_loc_options)
+    def set_loc_opts(self, exc_type):
+        d_sel = ipywidgets.Dropdown(
+            options=list(self.sources.keys()), description="dataset")
 
-    def set_acc_loc_opts(self, key, idx):
-        i_name = self.sources[key]["files"][idx]
-        with pims.open(str(self.data_dir / i_name)) as fr:
-            lo = {i_name: list(self.rois["acceptor"](
-                self.exc_img_filter(fr, "a")))}
-        self.acceptor_locator = Locator(lo)
-        if isinstance(self.acceptor_loc_options, dict):
-            self.acceptor_locator.set_options(**self.acceptor_loc_options)
+        if exc_type.startswith("d"):
+            loc = self.locators["donor"]
+        elif exc_type.startswith("a"):
+            loc = self.locators["acceptor"]
+        else:
+            raise ValueError("`exc_type` has to be \"donor\" or \"acceptor\".")
+
+        def set_files(change=None):
+            if exc_type.startswith("d"):
+                loc.files = \
+                    {k: self.donor_sum(v)
+                     for k, v in self.sources[d_sel.value]["files"].items()}
+            elif exc_type.startswith("a"):
+                loc.files = \
+                    {k: self.rois["acceptor"](self.exc_img_filter(v, "a"))
+                     for k, v in self.sources[d_sel.value]["files"].items()}
+
+        set_files()
+        loc.auto_scale()
+        d_sel.observe(set_files, "value")
+
+        return ipywidgets.VBox([d_sel, loc])
 
     def locate(self):
         num_files = sum(len(s["files"]) for s in self.sources.values())
@@ -120,41 +146,28 @@ class Tracker:
         label = ipywidgets.Label(value="Starting…")
         display(label)
 
-        if self.donor_locator is not None:
-            self.donor_loc_options = self.donor_locator.get_options()
-        if self.acceptor_locator is not None:
-            self.acceptor_loc_options = self.acceptor_locator.get_options()
-        if None in (self.donor_loc_options, self.acceptor_loc_options):
-            raise RuntimeError("Localization options not set. Either set "
-                               "{donor,acceptor}_loc_options or use the "
-                               "`set_{don,acc}_loc_opts` methods.")
-
         for key, src in self.sources.items():
             ret = []
             files = src["files"]
-            for i, f in enumerate(files):
+            for i, (f, fr) in enumerate(files.items()):
                 label.value = f"Locating {f} ({cnt}/{num_files})"
                 cnt += 1
 
-                with pims.open(str(self.data_dir / f)) as fr:
-                    overlay = self.donor_sum(fr)
-                    for o in overlay:
-                        o[o < 1] = 1
-                    lo = daostorm_3d.batch(overlay, **self.donor_loc_options)
-                    acc_fr = list(self.rois["acceptor"](
-                        self.exc_img_filter(fr, "a")))
-                    if len(acc_fr):
-                        for a in acc_fr:
-                            a[a < 1] = 1
-                        lo_a = daostorm_3d.batch(acc_fr,
-                                                 **self.acceptor_loc_options)
-                        lo = pd.concat([lo, lo_a]).sort_values("frame")
-                        lo = lo.reset_index(drop=True)
+                don_fr = self.donor_sum(fr)
+                lo = self.locators["donor"].batch_func(
+                    don_fr, **self.locators["donor"].options)
 
-                    # correct for the fact that locating happend in the
-                    # acceptor ROI
-                    lo[["x", "y"]] += self.rois["acceptor"].top_left
-                    ret.append(lo)
+                acc_fr = self.rois["acceptor"](self.exc_img_filter(fr, "a"))
+                if len(acc_fr):
+                    lo_a = self.locators["acceptor"].batch_func(
+                        acc_fr, **self.locators["acceptor"].options)
+                    lo = pd.concat([lo, lo_a]).sort_values("frame")
+                    lo = lo.reset_index(drop=True)
+
+                # correct for the fact that locating happend in the
+                # acceptor ROI
+                self.rois["acceptor"].reset_origin(lo)
+                ret.append(lo)
             self.loc_data[key] = pd.concat(ret, keys=files)
 
     def track(self, feat_radius=4, bg_frame=3, link_radius=1, link_mem=1,
@@ -172,30 +185,35 @@ class Tracker:
                                                 "bg_estimator": bg_estimator})
         self.tracker.min_length = min_length
 
-        for key in self.sources:
+        for key, src in self.sources.items():
             ret = []
             ret_keys = []
             new_p = 0  # Particle ID unique across files
-            files = self.loc_data[key].index.remove_unused_levels().levels[0]
-            for f in files.unique():
-                loc = self.loc_data[key].loc[f].copy()
+            for f, img in src["files"].items():
                 label.value = f"Tracking {f} ({cnt}/{num_files})"
                 cnt += 1
 
-                with pims.open(str(self.data_dir / f)) as img:
-                    don_loc = self.rois["donor"](loc)
-                    acc_loc = self.rois["acceptor"](loc)
+                loc = self.loc_data[key]
+                try:
+                    loc = loc.loc[f].copy()
+                except KeyError:
+                    # No localizations in this file
+                    continue
 
-                    if image_filter is not None:
-                        img = image_filter(img)
+                don_loc = self.rois["donor"](loc)
+                acc_loc = self.rois["acceptor"](loc)
 
-                    try:
-                        d = self.tracker.track(
+                if image_filter is not None:
+                    img = image_filter(img)
+
+                try:
+                    d = self.tracker.track(
                             self.rois["donor"](img),
                             self.rois["acceptor"](img),
                             don_loc, acc_loc)
-                    except Exception as e:
-                        warnings.warn(f"Tracking failed for {f}. Reason: {e}")
+                except Exception as e:
+                    warnings.warn(f"Tracking failed for {f}. Reason: {e}")
+
                 ps = d["fret", "particle"].copy().values
                 for p in np.unique(ps):
                     d.loc[ps == p, ("fret", "particle")] = new_p
@@ -226,10 +244,9 @@ class Tracker:
             if not v["cells"]:
                 # no cells
                 continue
-            for f in self.track_data[k].index.levels[0].unique():
-                with pims.open(str(self.data_dir / f)) as fr:
-                    don_fr = self.rois["donor"](fr)
-                    cell_fr = np.array(sel(don_fr, key))
+            for f, fr in v["files"].items():
+                don_fr = self.rois["donor"](fr)
+                cell_fr = np.array(sel(don_fr, key))
                 self.cell_images[f] = cell_fr
 
     def extract_profile_images(self, channel, files_re, frame=0):
@@ -244,14 +261,18 @@ class Tracker:
         self.profile_images[channel] = imgs
 
     def save(self, file_prefix="tracking"):
-        loc_options = collections.OrderedDict([
-            ("donor", self.donor_loc_options),
-            ("acceptor", self.acceptor_loc_options),
-            ("beads", self.bead_loc_options)])
+        loc_options = collections.OrderedDict(
+            [(k, v.get_settings()) for k, v in self.locators.items()])
+
+        src = collections.OrderedDict()
+        for k, v in self.sources.items():
+            v_new = v.copy()
+            v_new["files"] = list(v["files"].keys())
+            src[k] = v_new
+
         top = collections.OrderedDict(
             tracker=self.tracker, rois=self.rois, loc_options=loc_options,
-            data_dir=str(self.data_dir), sources=self.sources,
-            bead_files=self.bead_files)
+            data_dir=str(self.data_dir), sources=src)
         outfile = Path(f"{file_prefix}-v{output_version:03}")
         with outfile.with_suffix(".yaml").open("w") as f:
             io.yaml.safe_dump(top, f)
@@ -279,14 +300,18 @@ class Tracker:
             cfg = io.yaml.safe_load(f)
         ret = cls([0, 0], [0, 0], [0, 0], "")
         ret.rois = cfg["rois"]
-        ret.sources = cfg["sources"]
-        ret.bead_files = cfg["bead_files"]
-        ret.bead_loc_options = cfg["loc_options"]["beads"]
-        ret.donor_loc_options = cfg["loc_options"]["donor"]
-        ret.acceptor_loc_options = cfg["loc_options"]["acceptor"]
+
+        ret.data_dir = Path(cfg.get("data_dir", ""))
+
+        src = cfg["sources"]
+        for k, s in src.items():
+            src[k]["files"] = ret._open_image_sequences(s["files"])
+        ret.sources = src
+
+        for n, lo in cfg["loc_options"].items:
+            ret.locators[n].set_settings(lo)
         ret.tracker = cfg["tracker"]
         ret.exc_img_filter = FretImageSelector(ret.tracker.excitation_seq)
-        ret.data_dir = Path(cfg.get("data_dir", ""))
 
         do_load = []
         if loc:
