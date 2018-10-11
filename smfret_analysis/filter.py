@@ -10,6 +10,7 @@ import pandas as pd
 import ipywidgets
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+from matplotlib import gridspec
 import pims
 import cv2
 
@@ -64,6 +65,8 @@ class Filter:
 
         self.beam_shapes = {"donor": None, "acceptor": None}
 
+        self._brightness_fig = None
+
         self.statistics = {k: [] for k in self.track_filters.keys()}
 
     def calc_beam_shape_sm(self, keys="all", channel="donor", weighted=False,
@@ -112,112 +115,88 @@ class Filter:
             a = len(f.tracks)
             self.statistics[k].append(StatItem("acc bleach", b, a))
 
-    def find_brightness_params(self, key, frame=None):
-        import bokeh.plotting
-        import bokeh.application as b_app
-        import bokeh.application.handlers as b_hnd
+    def _make_dataset_selector(self, state, callback):
+        d_sel = ipywidgets.Dropdown(options=list(self.track_filters.keys()),
+                                    description="dataset")
 
-        global _bokeh_js_loaded
-        if not _bokeh_js_loaded:
-            bokeh.plotting.output_notebook(bokeh.resources.INLINE,
-                                           hide_banner=True)
-            _bokeh_js_loaded = True
+        def change_dataset(key=None):
+            trc = self.track_filters[d_sel.value].tracks
+            state["trc"] = trc
+            state["pnos"] = sorted(trc["fret", "particle"].unique())
+            state["files"] = \
+                trc.index.remove_unused_levels().levels[0].unique()
 
-        frame = self.exc_scheme.find("d") if frame is None else frame
-        dat = self.track_filters[key].tracks
-        dat0 = dat[(dat["fret", "has_neighbor"] == 0) &
-                   (dat["donor", "frame"] == frame)]
+            callback()
 
-        ds = bokeh.models.ColumnDataSource(dat0)
-        ds.data["file"] = [i[0] for i in ds.data["index"]]
-        ds_all = bokeh.models.ColumnDataSource(
-            dict(xs=[], xs_d=[], ys=[], file=[], particle=[], don_mass=[],
-                 acc_mass=[], has_neighbor=[]))
+        d_sel.observe(change_dataset, names="value")
+        change_dataset()
 
-        def update(attr, old, new):
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore",
-                                      bokeh.util.warnings.BokehUserWarning)
-                inds = np.array(new["1d"]["indices"])
-                if len(inds) == 0:
-                    return
-                xs = []
-                xs_d = []
-                ys = []
-                files = []
-                particles = []
-                don_mass = []
-                acc_mass = []
-                has_neigh = []
-                for i in inds:
-                    row = dat0.iloc[i]
-                    file = row.name[0]
-                    pno = row["fret", "particle"]
-                    d = dat.loc[file]
-                    d = d[d["fret", "particle"] == pno]
-                    m = np.isfinite(d["fret", "eff"])
-                    xs.append(d["donor", "frame"])
-                    xs_d.append(d["donor", "frame"].values[m])
-                    ys.append(d["fret", "eff"].values[m])
-                    files.append(file)
-                    particles.append(pno)
-                    don_mass.append(d["donor", "mass"].values)
-                    acc_mass.append(d["acceptor", "mass"].values)
-                    has_neigh.append(d["fret", "has_neighbor"].values)
+        return d_sel
 
-                ds_all.data["xs"] = xs
-                ds_all.data["xs_d"] = xs_d
-                ds_all.data["ys"] = ys
-                ds_all.data["file"] = files
-                ds_all.data["particle"] = particles
-                ds_all.data["don_mass"] = don_mass
-                ds_all.data["acc_mass"] = acc_mass
-                ds_all.data["has_neighbor"] = has_neigh
+    def find_brightness_params(self, frame=None):
+        state = {"picked": []}
 
-        def modify_doc(doc):
-            tools = "pan, wheel_zoom, box_select, lasso_select, reset, tap"
-            fig_opts = dict(plot_width=300, plot_height=300, tools=tools)
-            l_fig = bokeh.plotting.figure(**fig_opts)
-            l = l_fig.scatter("fret_eff", "fret_stoi", source=ds)
+        if self._brightness_fig is None:
+            fig = plt.figure()
+            gs = gridspec.GridSpec(2, 2, height_ratios=[2, 1])
+            fig.add_subplot(gs[0, 0])
+            fig.add_subplot(gs[0, 1])
+            fig.add_subplot(gs[1, :])
 
-            ht = bokeh.models.HoverTool(
-                tooltips=[("file", "@file{%s}"),
-                          ("particle", "@fret_particle")],
-                formatters={"file": "printf"})
-            l_fig.add_tools(ht)
+            def on_pick(event):
+                state["picked"] = event.ind
+                plot_time_trace()
 
-            r_fig = bokeh.plotting.figure(**fig_opts)
-            r = r_fig.scatter("fret_d_mass", "fret_a_mass", source=ds)
-            r_fig.add_tools(ht)
+            fig.canvas.mpl_connect("pick_event", on_pick)
+            self._brightness_fig = fig
 
-            b_fig = bokeh.plotting.figure(plot_width=2*fig_opts["plot_width"],
-                                          plot_height=100, tools="reset")
-            b_fig.extra_y_ranges = {"eff": bokeh.models.Range1d(-0.01, 1.01)}
-            b_fig.multi_line("xs_d", "ys", source=ds_all, y_range_name="eff")
-            b_fig.multi_line("xs", "has_neighbor", source=ds_all,
-                             y_range_name="eff", color="black")
-            b_fig.multi_line("xs", "don_mass", source=ds_all, color="green")
-            b_fig.multi_line("xs", "acc_mass", source=ds_all, color="red")
-            ht = bokeh.models.HoverTool(
-                tooltips=[("file", "@file{%s}"), ("particle", "@particle")],
-                formatters={"file": "printf"})
-            b_fig.add_tools(ht)
-            b_fig.add_layout(bokeh.models.LinearAxis(y_range_name="eff"),
-                             "right")
+        es_ax, br_ax, t_ax = self._brightness_fig.axes
 
-            layout = bokeh.layouts.column(
-                [bokeh.layouts.row([l_fig, r_fig]),
-                b_fig])
-            doc.add_root(layout)
+        f_sel = ipywidgets.IntText(
+            value=self.exc_scheme.find("d") if frame is None else frame,
+            description="frame")
 
-            ds.on_change("selected", update)
+        def set_frame(change=None):
+            trc = state["trc"]
+            state["cur_trc"] = trc[(trc["donor", "frame"] == f_sel.value) &
+                                   (trc["fret", "has_neighbor"] == 0)]
 
-            return doc
+            plot_scatter()
+            plot_time_trace()
 
-        hnd = b_hnd.FunctionHandler(modify_doc)
-        app = b_app.Application(hnd)
+        def plot_scatter(change=None):
+            t = state["cur_trc"]
+            es_ax.cla()
+            es_ax.scatter(t["fret", "eff"], t["fret", "stoi"], picker=True,
+                          marker=".")
+            es_ax.set_xlim([-0.5, 1.5])
+            es_ax.set_ylim([0., 1.25])
 
-        bokeh.plotting.show(app)
+            br_ax.cla()
+            br_ax.scatter(t["fret", "d_mass"], t["fret", "a_mass"],
+                          picker=True, marker=".")
+
+        def plot_time_trace(change=None):
+            t_ax.cla()
+
+            if len(state["picked"]) == 1:
+                pno = state["cur_trc"].iloc[state["picked"][0]]
+                pno = pno["fret", "particle"]
+
+                t = state["trc"]
+                t = t[(t["fret", "particle"] == pno) &
+                      (t["fret", "exc_type"] == 0)]
+
+                t_ax.plot(t["donor", "frame"], t["donor", "mass"], "g")
+                t_ax.plot(t["acceptor", "frame"], t["acceptor", "mass"], "r")
+
+            self._brightness_fig.tight_layout()
+            self._brightness_fig.canvas.draw()
+
+        d_sel = self._make_dataset_selector(state, set_frame)
+        f_sel.observe(set_frame, "value")
+
+        return ipywidgets.VBox([d_sel, f_sel, self._brightness_fig.canvas])
 
     def query(self, expr, mi_sep="_"):
         for k, f in self.track_filters.items():
