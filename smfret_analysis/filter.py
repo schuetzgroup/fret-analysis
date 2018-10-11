@@ -333,9 +333,7 @@ class Filter:
         for k, v in self.beam_shapes.items():
             if v is None or v.fit_result is None:
                 continue
-            res = {k2: float(v2)
-                   for k2, v2 in v.fit_result.best_values.items()}
-            yadict[k] = res
+            yadict[k] = v.fit_result
 
         with outfile.with_suffix(".yaml").open("w") as f:
             io.yaml.safe_dump(dict(beam_shapes=yadict), f,
