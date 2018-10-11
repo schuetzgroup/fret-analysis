@@ -50,16 +50,17 @@ class StatItem:
 
 class Filter:
     def __init__(self, file_prefix="tracking"):
-        tr = Tracker.load(file_prefix, loc=False)
-        self.rois = tr.rois
-        self.cc = tr.tracker.chromatic_corr
+        cfg = Tracker.load_data(file_prefix, loc=False)
+
+        self.rois = cfg["rois"]
+        self.cc = cfg["tracker"].chromatic_corr
         self.track_filters = {k: fret.SmFretFilter(v)
-                              for k, v in tr.track_data.items()}
-        self.exc_scheme = "".join(tr.tracker.excitation_seq)
-        self.data_dir = tr.data_dir
-        self.sources = tr.sources
-        self.cell_images = tr.cell_images
-        self.profile_images = tr.profile_images
+                              for k, v in cfg["track_data"].items()}
+        self.exc_scheme = "".join(cfg["tracker"].excitation_seq)
+        self.data_dir = cfg["data_dir"]
+        self.sources = cfg["sources"]
+        self.cell_images = cfg["cell_images"]
+        self.profile_images = cfg["profile_images"]
 
         self.beam_shapes = {"donor": None, "acceptor": None}
 

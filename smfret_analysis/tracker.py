@@ -356,32 +356,26 @@ class Tracker:
         np.savez_compressed(outfile.with_suffix(".profile_img.npz"),
                             **self.profile_images)
 
-    @classmethod
-    def load(cls, file_prefix="tracking", loc=True, tracks=True,
-             cell_images=True, profile_images=True):
+    @staticmethod
+    def load_data(file_prefix="tracking", loc=True, tracks=True,
+                  cell_images=True, profile_images=True, images=True):
         infile = Path(f"{file_prefix}-v{output_version:03}")
         with infile.with_suffix(".yaml").open() as f:
             cfg = io.yaml.safe_load(f)
-        ret = cls([0, 0], [0, 0], [0, 0], "")
-        ret.rois = cfg["rois"]
 
-        ret.data_dir = Path(cfg.get("data_dir", ""))
-
-        src = cfg["sources"]
-        for k, s in src.items():
-            src[k]["files"] = ret._open_image_sequences(s["files"])
-        ret.sources = src
-
-        for n, lo in cfg["loc_options"].items:
-            ret.locators[n].set_settings(lo)
-        ret.tracker = cfg["tracker"]
-        ret.exc_img_filter = FretImageSelector(ret.tracker.excitation_seq)
+        ret = {"rois": cfg["rois"], "data_dir": Path(cfg.get("data_dir", "")),
+               "sources": cfg["sources"], "loc_options": cfg["loc_options"],
+               "tracker": cfg["tracker"],
+               "loc_data": collections.OrderedDict(),
+               "track_data": collections.OrderedDict(),
+               "cell_images": collections.OrderedDict(),
+               "profile_images": collections.OrderedDict()}
 
         do_load = []
         if loc:
-            do_load.append((ret.loc_data, "_loc"))
+            do_load.append((ret["loc_data"], "_loc"))
         if tracks:
-            do_load.append((ret.track_data, "_trc"))
+            do_load.append((ret["track_data"], "_trc"))
         with pd.HDFStore(infile.with_suffix(".h5"), "r") as s:
             for sink, suffix in do_load:
                 keys = (k for k in s.keys() if k.endswith(suffix))
@@ -393,7 +387,7 @@ class Tracker:
             cell_img_file = infile.with_suffix(".cell_img.npz")
             try:
                 with np.load(cell_img_file) as data:
-                    ret.cell_images = collections.OrderedDict(data)
+                    ret["cell_images"] = collections.OrderedDict(data)
             except Exception:
                 warnings.warn("Could not load cell images from file "
                             f"\"{str(cell_img_file)}\".")
@@ -401,10 +395,34 @@ class Tracker:
         if profile_images:
             try:
                 with np.load(profile_img_file) as data:
-                    ret.profile_images = collections.OrderedDict(data)
+                    ret["profile_images"] = collections.OrderedDict(data)
             except Exception:
                 warnings.warn("Could not load profile images from file "
                             f"\"{str(profile_img_file)}\".")
 
         return ret
 
+    @classmethod
+    def load(cls, file_prefix="tracking", loc=True, tracks=True,
+             cell_images=True, profile_images=True):
+        cfg = cls.load_data(file_prefix, loc, tracks, cell_images,
+                            profile_images)
+
+        ret = cls([0, 0], [0, 0], [0, 0], "")
+
+        for key in ("rois", "data_dir", "tracker", "loc_data", "track_data",
+                    "cell_images", "profile_images"):
+            setattr(ret, key, cfg[key])
+
+        src = cfg["sources"]
+        for k, s in src.items():
+            src[k]["files"] = ret._open_image_sequences(s["files"])
+        ret.sources = src
+
+        for n, lo in cfg["loc_options"].items():
+            ret.locators[n].algorithm = lo["algorithm"]
+            ret.locators[n].set_settings(lo["options"])
+
+        ret.exc_img_filter = FretImageSelector(ret.tracker.excitation_seq)
+
+        return ret
