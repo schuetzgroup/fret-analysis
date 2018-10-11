@@ -104,56 +104,10 @@ class Filter:
         self.beam_shapes[channel] = flatfield.Corrector(
             self.profile_images[channel], gaussian_fit=gaussian_fit)
 
-    def find_acc_bleach_options(self, key):
-        f = self.track_filters[key]
-        trc = f.tracks
-        particles = np.sort(trc["fret", "particle"].unique())
-
-        @ipywidgets.interact(p=ipywidgets.IntText(0),
-                             pen=ipywidgets.FloatText(2e7))
-        def show_track(p, pen):
-            pi = particles[p]
-            print(f"particle {pi}")
-            t = trc[trc["fret", "particle"] == pi]
-            td = t[t["fret", "exc_type"] ==
-                   fret.SmFretTracker.exc_type_nums["d"]]
-            ta = t[t["fret", "exc_type"] ==
-                   fret.SmFretTracker.exc_type_nums["a"]]
-
-            fig, ax = plt.subplots(1, 3, figsize=(12, 4))
-            fd = td["donor", "frame"].values
-            dm = td["fret", "d_mass"].values
-            fa = ta["donor", "frame"].values
-            am = ta["fret", "a_mass"].values
-            ef = td["fret", "eff"].values
-            hn = td["fret", "has_neighbor"].values
-
-            cp_a = f.cp_detector.find_changepoints(am, pen) - 1
-            cp_d = np.searchsorted(fd, fa[cp_a]) - 1
-            if len(fd):
-                changepoint.plot_changepoints(dm, cp_d, time=fd, ax=ax[0])
-                changepoint.plot_changepoints(ef, cp_d, time=fd, ax=ax[2])
-            if len(fa):
-                changepoint.plot_changepoints(am, cp_a, time=fa, ax=ax[1])
-            axt1 = ax[1].twinx()
-            axt1.plot(fd, hn, c="C2", alpha=0.2)
-            axt1.set_ylim(-0.05, 1.05)
-
-            ax[0].set_title("d_mass")
-            ax[1].set_title("a_mass")
-            ax[2].set_title("eff")
-
-            for a in ax:
-                a.grid()
-
-            fig.tight_layout()
-            plt.show()
-
-    def filter_acc_bleach(self, cp_penalty, brightness_thresh):
+    def filter_acc_bleach(self, brightness_thresh):
         for k, f in self.track_filters.items():
             b = len(f.tracks)
-            f.acceptor_bleach_step(brightness_thresh, truncate=True,
-                                   penalty=cp_penalty)
+            f.acceptor_bleach_step(brightness_thresh, truncate=True)
             a = len(f.tracks)
             self.statistics[k].append(StatItem("acc bleach", b, a))
 

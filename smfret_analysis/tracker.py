@@ -223,6 +223,70 @@ class Tracker:
 
             self.track_data[key] = pd.concat(ret, keys=ret_keys)
 
+    def find_segment_a_mass_options(self):
+        state = {}
+
+        p_sel = ipywidgets.IntText(value=0, description="particle")
+        p_label = ipywidgets.Label()
+        pen_sel = ipywidgets.FloatText(value=2e7, description="penalty")
+
+        fig, (ax_dm, ax_am, ax_eff) = plt.subplots(1, 3, figsize=(8, 4))
+        ax_hn = ax_am.twinx()
+        all_ax = (ax_dm, ax_am, ax_eff, ax_hn)
+
+        def show_track(change=None):
+            for a in all_ax:
+                a.cla()
+
+            pi = state["pnos"][p_sel.value]
+            p_label.value = f"Real particle number: {pi}"
+            trc = state["tr"]
+            t = trc[trc["fret", "particle"] == pi]
+            td = t[t["fret", "exc_type"] ==
+                   fret.SmFretTracker.exc_type_nums["d"]]
+            ta = t[t["fret", "exc_type"] ==
+                   fret.SmFretTracker.exc_type_nums["a"]]
+
+            fd = td["donor", "frame"].values
+            dm = td["fret", "d_mass"].values
+            fa = ta["donor", "frame"].values
+            am = ta["fret", "a_mass"].values
+            ef = td["fret", "eff"].values
+            hn = td["fret", "has_neighbor"].values
+
+            cp_a = self.tracker.cp_detector.find_changepoints(
+                am, pen_sel.value) - 1
+            cp_d = np.searchsorted(fd, fa[cp_a]) - 1
+            if len(fd):
+                changepoint.plot_changepoints(dm, cp_d, time=fd, ax=ax_dm)
+                changepoint.plot_changepoints(ef, cp_d, time=fd, ax=ax_eff)
+            if len(fa):
+                changepoint.plot_changepoints(am, cp_a, time=fa, ax=ax_am)
+            ax_hn.plot(fd, hn, c="C2", alpha=0.2)
+
+            ax_dm.relim(visible_only=True)
+            ax_am.relim(visible_only=True)
+            ax_eff.set_ylim(-0.05, 1.05)
+            ax_hn.set_ylim(-0.05, 1.05)
+
+            ax_dm.set_title("d_mass")
+            ax_am.set_title("a_mass")
+            ax_eff.set_title("eff")
+
+            fig.tight_layout()
+            fig.canvas.draw()
+
+        p_sel.observe(show_track, "value")
+        pen_sel.observe(show_track, "value")
+
+        d_sel = self._make_dataset_selector(state, show_track)
+
+        return ipywidgets.VBox([d_sel, p_sel, pen_sel, fig.canvas, p_label])
+
+    def segment_a_mass(self, **kwargs):
+        for t in self.track_data.values():
+            self.tracker.segment_a_mass(t, **kwargs)
+
     def analyze(self):
         for t in self.track_data.values():
             self.tracker.analyze(t)
