@@ -45,6 +45,8 @@ class Filter:
 
         self._brightness_fig = None
         self._thresholder = None
+        self._beam_shape_fig = None
+        self._beam_shape_artists = [None, None]
 
         self.statistics = {k: [] for k in self.track_filters.keys()}
 
@@ -220,18 +222,46 @@ class Filter:
             a = len(filt.tracks)
             self.statistics[k].append(StatItem("cell mask", b, a))
 
-    def find_beam_shape_thresh(self, channel):
-        bs = self.beam_shapes[channel]
+    def find_beam_shape_thresh(self):
+        if self._beam_shape_fig is None:
+            fig = plt.figure()
+            fig.add_subplot(1, 2, 1)
+            fig.add_subplot(1, 2, 2)
 
-        tw = ipywidgets.BoundedIntText(value=75, min=0, max=100)
-        @ipywidgets.interact(thresh=tw)
-        def show_cell(thresh):
-            fig, (ax1, ax2) = plt.subplots(1, 2)
-            ax1.imshow(bs.corr_img)
-            ax2.imshow(bs.corr_img * 100 > thresh)
+            self._beam_shape_fig = fig
 
-            fig.tight_layout()
-            plt.show()
+        ax = self._beam_shape_fig.axes
+
+        channel_sel = ipywidgets.Dropdown(options=list(self.beam_shapes),
+                                          description="channel")
+        thresh_sel = ipywidgets.BoundedIntText(value=75, min=0, max=100,
+                                               description="threshold")
+
+        bs = self.beam_shapes[channel_sel.value]
+
+        def channel_changed(change=None):
+            bs = self.beam_shapes[channel_sel.value]
+            if self._beam_shape_artists[0] is not None:
+                self._beam_shape_artists[0].remove()
+            self._beam_shape_artists[0] = ax[0].imshow(bs.corr_img)
+            update()
+
+        def update(change=None):
+            bs = self.beam_shapes[channel_sel.value]
+            if self._beam_shape_artists[1] is not None:
+                self._beam_shape_artists[1].remove()
+            self._beam_shape_artists[1] = ax[1].imshow(
+                bs.corr_img * 100 > thresh_sel.value)
+            self._beam_shape_fig.tight_layout()
+            self._beam_shape_fig.canvas.draw()
+
+        channel_sel.observe(channel_changed, "value")
+        thresh_sel.observe(update, "value")
+
+        channel_changed()
+
+        return ipywidgets.VBox([channel_sel, thresh_sel,
+                                self._beam_shape_fig.canvas])
 
     def filter_beam_shape_region(self, channel, thresh):
         mask = self.beam_shapes[channel].corr_img * 100 > thresh
