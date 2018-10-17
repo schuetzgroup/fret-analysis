@@ -14,32 +14,10 @@ from matplotlib import gridspec
 import pims
 import cv2
 
-from sdt import io, roi, fret, chromatic, flatfield, changepoint, helper
+from sdt import io, roi, fret, chromatic, flatfield, helper, nbui, image
 
 from .version import output_version
 from .tracker import Tracker
-
-
-_bokeh_js_loaded = False
-
-
-def cell_mask_a_thresh(img, block_size, c, smoothing=(5, 5)):
-    scaled = img - img.min()
-    scaled = scaled / scaled.max() * 255
-    blur = cv2.GaussianBlur(scaled.astype(np.uint8), smoothing, 0)
-    mask = cv2.adaptiveThreshold(blur, 1, cv2.ADAPTIVE_THRESH_MEAN_C,
-                                 cv2.THRESH_BINARY, 2*block_size+1, c)
-    return mask.astype(bool)
-
-
-def cell_mask_otsu(img, factor, smoothing=(5, 5)):
-    scaled = img - img.min()
-    scaled = scaled / scaled.max() * 255
-    blur = cv2.GaussianBlur(scaled.astype(np.uint8), smoothing, 0)
-    thresh, mask = cv2.threshold(blur, 0, 1,
-                                 cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    thresh2, mask = cv2.threshold(blur, thresh * factor, 1, cv2.THRESH_BINARY)
-    return mask.astype(bool)
 
 
 class StatItem:
@@ -66,6 +44,7 @@ class Filter:
         self.beam_shapes = {"donor": None, "acceptor": None}
 
         self._brightness_fig = None
+        self._thresholder = None
 
         self.statistics = {k: [] for k in self.track_filters.keys()}
 
@@ -213,63 +192,28 @@ class Filter:
             a = len(f.tracks)
             self.statistics[k].append(StatItem("at start", b, a))
 
-    def load_cell_mask(self, file, return_img=False, method=cell_mask_a_thresh,
-                       **kwargs):
-        if isinstance(method, str):
-            method = globals()["cell_mask_" + method]
-        img = self.cell_images[file][0]  # Use first cell image
-        mask = method(img, **kwargs)
-        if return_img:
-            return mask, img
-        else:
-            return mask
+    def find_cell_mask_params(self):
+        if self._thresholder is None:
+            self._thresholder = nbui.Thresholder()
 
-    def _plot_cell_thresh(self, mask, img):
-        fig, (ax1, ax2) = plt.subplots(1, 2)
-        i1 = img.copy()
-        i1[~mask] = 0
-        i2 = img.copy()
-        i2[mask] = 0
-        imax = img.max() / 2
-        ax1.imshow(i1, vmax=imax)
-        ax2.imshow(i2, vmax=imax)
+        self._thresholder.images = collections.OrderedDict(
+            [(k, v[0]) for k, v in self.cell_images.items()])
 
-        fig.tight_layout()
-        plt.show()
+        return self._thresholder
 
-    def find_cell_mask_params(self, key, method="a_thresh"):
-        fw = ipywidgets.Dropdown(
-            options=self.track_filters[key].tracks.index.levels[0].unique())
-
-        if method == "a_thresh":
-            bs = ipywidgets.IntText(value=65)
-            cw = ipywidgets.IntText(value=-5)
-
-            @ipywidgets.interact(file=fw, block_size=bs, c=cw)
-            def show_cell(file, block_size, c):
-                mask, img = self.load_cell_mask(
-                    file, return_img=True, method=method,
-                    block_size=block_size, c=c)
-                self._plot_cell_thresh(mask, img)
-        elif method == "otsu":
-            faw = ipywidgets.FloatText(value=1., step=0.01)
-
-            @ipywidgets.interact(file=fw, factor=faw)
-            def show_cell(file, factor):
-                mask, img = self.load_cell_mask(
-                    file, return_img=True, method=method, factor=factor)
-                self._plot_cell_thresh(mask, img)
-
-    def apply_cell_masks(self, method="a_thresh", **kwargs):
+    def apply_cell_masks(self, method="adaptive", **kwargs):
         for k, v in self.sources.items():
             filt = self.track_filters[k]
             b = len(filt.tracks)
+
+            if isinstance(method, str):
+                method = getattr(image, method + "_thresh")
 
             if v["cells"]:
                 trc = filt.tracks
 
                 files = np.unique(trc.index.levels[0])
-                mask = [(f, self.load_cell_mask(f, method=method, **kwargs))
+                mask = [(f, method(self.cell_images[f][0], **kwargs))
                         for f in files]
                 filt.image_mask(mask, channel="donor")
 
