@@ -3,6 +3,7 @@ import functools
 import warnings
 import collections
 from pathlib import Path
+import itertools
 
 import numpy as np
 from scipy import ndimage
@@ -13,8 +14,10 @@ import matplotlib.pyplot as plt
 from matplotlib import gridspec
 import pims
 import cv2
+from sklearn.cluster import AgglomerativeClustering
+from sklearn.mixture import GaussianMixture
 
-from sdt import io, roi, fret, chromatic, flatfield, helper, nbui, image
+from sdt import io, roi, fret, chromatic, flatfield, helper, nbui, image, plot
 
 from .version import output_version
 from .tracker import Tracker
@@ -47,47 +50,42 @@ class Filter:
         self._thresholder = None
         self._beam_shape_fig = None
         self._beam_shape_artists = [None, None]
+        self._beta_population_fig = None
+        self._eff_stoi_fig = None
 
         self.statistics = {k: [] for k in self.track_filters.keys()}
 
-    def calc_beam_shape_sm(self, keys="all", channel="donor", weighted=False,
-                           frame=None):
+    def calc_beam_shape_sm(self, keys="all", weighted=False, frame=None):
         if not len(keys):
             return
-
-        if channel.startswith("d"):
-            k = "donor"
-            mk = "d_mass"
-            f = self.exc_scheme.find("d") if frame is None else frame
-        elif channel.startswith("a"):
-            k = "acceptor"
-            mk = "a_mass"
-            f = self.exc_scheme.find("a") if frame is None else frame
-        else:
-            raise ValueError("Channel must be \"donor\" or \"acceptor\".")
-
-        r = self.rois[k]
-
         if keys == "all":
             keys = self.track_filters.keys()
 
-        img_shape = (r.bottom_right[1] - r.top_left[1],
-                     r.bottom_right[0] - r.top_left[0])
-        data = [v.tracks_orig for k, v in self.track_filters.items()
-                if k in keys]
-        data = [d[(d[k, "frame"] == f) & (d["fret", "interp"] == 0) &
-                  (d["fret", "has_neighbor"] == 0)]
-                for d in data]
-        bs = flatfield.Corrector(
-            *data, columns={"coords": [(k, "x"), (k, "y")],
-                            "mass": ("fret", mk)},
-            shape=img_shape, density_weight=weighted)
+        loop_var = [("donor", "d_mass",
+                     self.exc_scheme.find("d") if frame is None else frame),
+                    ("acceptor", "a_mass",
+                     self.exc_scheme.find("a") if frame is None else frame)]
+        for k, mk, f in loop_var:
+            r = self.rois[k]
 
-        self.beam_shapes[k] = bs
+            img_shape = (r.bottom_right[1] - r.top_left[1],
+                        r.bottom_right[0] - r.top_left[0])
+            data = [v.tracks_orig for k, v in self.track_filters.items()
+                    if k in keys]
+            data = [d[(d[k, "frame"] == f) & (d["fret", "interp"] == 0) &
+                    (d["fret", "has_neighbor"] == 0)]
+                    for d in data]
+            bs = flatfield.Corrector(
+                *data, columns={"coords": [(k, "x"), (k, "y")],
+                                "mass": ("fret", mk)},
+                shape=img_shape, density_weight=weighted)
 
-    def calc_beam_shape_bulk(self, channel="donor", gaussian_fit=True):
-        self.beam_shapes[channel] = flatfield.Corrector(
-            self.profile_images[channel], gaussian_fit=gaussian_fit)
+            self.beam_shapes[k] = bs
+
+    def calc_beam_shape_bulk(self, smooth_sigma=3., gaussian_fit=False):
+        for chan, img in self.profile_images.items():
+            self.beam_shapes[chan] = flatfield.Corrector(
+                img, gaussian_fit=gaussian_fit, smooth_sigma=smooth_sigma)
 
     def filter_acc_bleach(self, brightness_thresh):
         for k, f in self.track_filters.items():
@@ -113,6 +111,80 @@ class Filter:
         change_dataset()
 
         return d_sel
+
+    def plot_eff_vs_stoi(self):
+        if self._eff_stoi_fig is None:
+            self._eff_stoi_fig, _ = plt.subplots()
+
+        state = {}
+
+        def update(change=None):
+            data = state["trc"].loc[:, [("fret", "eff"), ("fret", "stoi")]]
+            data = data.values
+            data = data[np.all(np.isfinite(data), axis=1)]
+
+            ax = self._eff_stoi_fig.axes[0]
+            ax.cla()
+            plot.density_scatter(*data.T, ax=ax)
+            ax.set_xlabel("apparent eff.")
+            ax.set_ylabel("apparent stoi.")
+
+            self._eff_stoi_fig.canvas.draw()
+
+        d_sel = self._make_dataset_selector(state, update)
+
+        return ipywidgets.VBox([d_sel, self._eff_stoi_fig.canvas])
+
+    @staticmethod
+    def _gmm_split(data, n_components):
+        d = data.loc[:, [("fret", "eff"), ("fret", "stoi")]].values
+        valid = np.all(np.isfinite(d), axis=1)
+        d =  d[valid]
+        data = data[valid].copy()
+        gmm = GaussianMixture(n_components=n_components).fit(d)
+        labels = gmm.predict(d)
+        labels = np.argsort(gmm.means_[:, 0])[::-1][labels]  # sort according to descendent mean
+        data["__gmm_labels__"] = labels
+
+        split = collections.OrderedDict([(l, [])
+                                         for l in np.sort(np.unique(labels))])
+        for p, df in data.groupby(("fret", "particle")):
+            comp, cnt = np.unique(df["__gmm_labels__"].values,
+                                  return_counts=True)
+            split[comp[np.argmax(cnt)]].append(df)
+
+        return {k: pd.concat(v).drop("__gmm_labels__", 1, level=0)
+                for k, v in split.items()}
+
+    def select_beta_population(self):
+        if self._beta_population_fig is None:
+            self._beta_population_fig, _ = plt.subplots()
+
+        state = {}
+
+        n_comp_sel = ipywidgets.IntText(description="components", value=1)
+
+        cmaps = ["viridis", "gray", "plasma", "jet"]
+        def update(change=None):
+            split = Filter._gmm_split(state["trc"], n_comp_sel.value)
+
+            ax = self._beta_population_fig.axes[0]
+            ax.cla()
+            for (l, v), cm in zip(split.items(), itertools.cycle(cmaps)):
+                color = f"C{l % 10}" if l >= 0 else "black"
+                plot.density_scatter(v["fret", "eff"], v["fret", "stoi"],
+                                     marker=".", label=str(l), ax=ax,
+                                     cmap=cm)
+            #ax.legend(loc=0)
+            ax.set_xlabel("apparent eff.")
+            ax.set_ylabel("apparent stoi.")
+            self._beta_population_fig.canvas.draw()
+
+        d_sel = self._make_dataset_selector(state, update)
+        n_comp_sel.observe(update, "value")
+
+        return ipywidgets.VBox([d_sel, n_comp_sel,
+                                self._beta_population_fig.canvas])
 
     def find_brightness_params(self, frame=None):
         state = {"picked": []}
