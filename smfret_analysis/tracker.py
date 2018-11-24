@@ -291,16 +291,6 @@ class Tracker:
         for t in self.track_data.values():
             self.tracker.analyze(t)
 
-    def make_cell_masks(self, method="a_thresh", **kwargs):
-        for k, v in self.sources.items():
-            if not v["cells"]:
-                # no cells
-                continue
-            masks = collections.OrderedDict()
-            for f in self.track_data[k].index.levels[0].unique():
-                masks[f] = self.load_cell_mask(f, False, method, **kwargs)
-            self.cell_masks[k] = masks
-
     def extract_cell_images(self, key="c"):
         sel = FretImageSelector(self.tracker.excitation_seq)
 
