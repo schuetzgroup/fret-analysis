@@ -87,10 +87,10 @@ class Filter:
             self.beam_shapes[chan] = flatfield.Corrector(
                 img, gaussian_fit=gaussian_fit, smooth_sigma=smooth_sigma)
 
-    def filter_acc_bleach(self, brightness_thresh):
+    def filter_acc_bleach(self, brightness_thresh, truncate=True):
         for k, f in self.track_filters.items():
             b = len(f.tracks)
-            f.acceptor_bleach_step(brightness_thresh, truncate=True)
+            f.acceptor_bleach_step(brightness_thresh, truncate=truncate)
             a = len(f.tracks)
             self.statistics[k].append(StatItem("acc bleach", b, a))
 
