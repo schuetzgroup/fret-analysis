@@ -14,6 +14,7 @@ import pims
 import matplotlib.pyplot as plt
 
 from sdt import roi, chromatic, io, image, fret, changepoint, helper
+from sdt import flatfield as _flatfield  # avoid name clashes
 from sdt.fret import SmFretTracker, FretImageSelector
 from sdt.loc import daostorm_3d
 from sdt.nbui import Locator
@@ -27,19 +28,20 @@ def _img_sum(d, a):
 
 
 class Tracker:
-    def __init__(self, don_o, acc_o, roi_size, exc_scheme="da",
+    def __init__(self, don_o, acc_o, roi_size, excitation_seq="da",
                  data_dir=""):
         self.rois = dict(
             donor=roi.ROI(don_o, size=roi_size),
             acceptor=roi.ROI(acc_o, size=roi_size))
-        self.tracker = SmFretTracker(exc_scheme)
-        self.exc_img_filter = FretImageSelector(exc_scheme)
+        self.excitation_seq = excitation_seq
+        self.tracker = SmFretTracker()
+        self.exc_img_filter = FretImageSelector(excitation_seq)
         self.sources = collections.OrderedDict()
 
         self.loc_data = collections.OrderedDict()
         self.track_data = collections.OrderedDict()
         self.cell_images = collections.OrderedDict()
-        self.profile_images = collections.OrderedDict()
+        self.flatfield = collections.OrderedDict()
         self.data_dir = Path(data_dir)
 
         self.locators = collections.OrderedDict([
@@ -223,76 +225,8 @@ class Tracker:
 
             self.track_data[key] = pd.concat(ret, keys=ret_keys)
 
-    def find_segment_a_mass_options(self):
-        state = {}
-
-        p_sel = ipywidgets.IntText(value=0, description="particle")
-        p_label = ipywidgets.Label()
-        pen_sel = ipywidgets.FloatText(value=2e7, description="penalty")
-
-        fig, (ax_dm, ax_am, ax_eff) = plt.subplots(1, 3, figsize=(8, 4))
-        ax_hn = ax_am.twinx()
-        all_ax = (ax_dm, ax_am, ax_eff, ax_hn)
-
-        def show_track(change=None):
-            for a in all_ax:
-                a.cla()
-
-            pi = state["pnos"][p_sel.value]
-            p_label.value = f"Real particle number: {pi}"
-            trc = state["tr"]
-            t = trc[trc["fret", "particle"] == pi]
-            td = t[t["fret", "exc_type"] ==
-                   fret.SmFretTracker.exc_type_nums["d"]]
-            ta = t[t["fret", "exc_type"] ==
-                   fret.SmFretTracker.exc_type_nums["a"]]
-
-            fd = td["donor", "frame"].values
-            dm = td["fret", "d_mass"].values
-            fa = ta["donor", "frame"].values
-            am = ta["fret", "a_mass"].values
-            ef = td["fret", "eff"].values
-            hn = td["fret", "has_neighbor"].values
-
-            cp_a = self.tracker.cp_detector.find_changepoints(
-                am, pen_sel.value) - 1
-            cp_d = np.searchsorted(fd, fa[cp_a]) - 1
-            if len(fd):
-                changepoint.plot_changepoints(dm, cp_d, time=fd, ax=ax_dm)
-                changepoint.plot_changepoints(ef, cp_d, time=fd, ax=ax_eff)
-            if len(fa):
-                changepoint.plot_changepoints(am, cp_a, time=fa, ax=ax_am)
-            ax_hn.plot(fd, hn, c="C2", alpha=0.2)
-
-            ax_dm.relim(visible_only=True)
-            ax_am.relim(visible_only=True)
-            ax_eff.set_ylim(-0.05, 1.05)
-            ax_hn.set_ylim(-0.05, 1.05)
-
-            ax_dm.set_title("d_mass")
-            ax_am.set_title("a_mass")
-            ax_eff.set_title("eff")
-
-            fig.tight_layout()
-            fig.canvas.draw()
-
-        p_sel.observe(show_track, "value")
-        pen_sel.observe(show_track, "value")
-
-        d_sel = self._make_dataset_selector(state, show_track)
-
-        return ipywidgets.VBox([d_sel, p_sel, pen_sel, fig.canvas, p_label])
-
-    def segment_a_mass(self, **kwargs):
-        for t in self.track_data.values():
-            self.tracker.segment_a_mass(t, **kwargs)
-
-    def analyze(self):
-        for t in self.track_data.values():
-            self.tracker.analyze(t)
-
     def extract_cell_images(self, key="c"):
-        sel = FretImageSelector(self.tracker.excitation_seq)
+        sel = FretImageSelector(self.excitation_seq)
 
         for k, v in self.sources.items():
             if not v["cells"]:
@@ -303,16 +237,53 @@ class Tracker:
                 cell_fr = np.array(sel(don_fr, key))
                 self.cell_images[f] = cell_fr
 
-    def extract_profile_images(self, channel, files_re, frame=0):
+    def make_flatfield(self, dest, files_re, src=None, frame=0, bg=200,
+                       smooth_sigma=3., gaussian_fit=False):
         files = io.get_files(files_re, self.data_dir)[0]
         imgs = []
-        roi = self.rois[channel]
+        if src is None:
+            src = dest
 
         for f in files:
             with pims.open(str(self.data_dir / f)) as fr:
-                imgs.append(roi(fr[frame]))
+                imgs.append(self.rois[src](fr[frame]) - bg)
 
-        self.profile_images[channel] = imgs
+        if src == "acceptor" and dest == "donor":
+            imgs = [self.tracker.chromatic_corr(i, channel=2) for i in imgs]
+        elif src != dest:
+            raise ValueError ("src != dest and (src != \"acceptor\" and dest "
+                              "!= \"donor\)")
+
+        self.flatfield[dest] = _flatfield.Corrector(
+            imgs, smooth_sigma=smooth_sigma, gaussian_fit=gaussian_fit)
+
+    # Just copied over from Filter to preserve; port once needed.
+    # def make_flatfield_sm(self, keys="all", weighted=False, frame=None):
+    #     if not len(keys):
+    #         return
+    #     if keys == "all":
+    #         keys = self.track_filters.keys()
+    #
+    #     loop_var = [("donor", "d_mass",
+    #                  self.exc_scheme.find("d") if frame is None else frame),
+    #                 ("acceptor", "a_mass",
+    #                  self.exc_scheme.find("a") if frame is None else frame)]
+    #     for k, mk, f in loop_var:
+    #         r = self.rois[k]
+    #
+    #         img_shape = (r.bottom_right[1] - r.top_left[1],
+    #                     r.bottom_right[0] - r.top_left[0])
+    #         data = [v.tracks_orig for k, v in self.track_filters.items()
+    #                 if k in keys]
+    #         data = [d[(d[k, "frame"] == f) & (d["fret", "interp"] == 0) &
+    #                 (d["fret", "has_neighbor"] == 0)]
+    #                 for d in data]
+    #         bs = flatfield.Corrector(
+    #             *data, columns={"coords": [(k, "x"), (k, "y")],
+    #                             "mass": ("fret", mk)},
+    #             shape=img_shape, density_weight=weighted)
+    #
+    #         self.beam_shapes[k] = bs
 
     def save(self, file_prefix="tracking"):
         loc_options = collections.OrderedDict(
@@ -325,6 +296,7 @@ class Tracker:
             src[k] = v_new
 
         top = collections.OrderedDict(
+            excitation_seq=self.excitation_seq,
             tracker=self.tracker, rois=self.rois, loc_options=loc_options,
             data_dir=str(self.data_dir), sources=src)
         outfile = Path(f"{file_prefix}-v{output_version:03}")
@@ -343,23 +315,24 @@ class Tracker:
 
         np.savez_compressed(outfile.with_suffix(".cell_img.npz"),
                             **self.cell_images)
-        np.savez_compressed(outfile.with_suffix(".profile_img.npz"),
-                            **self.profile_images)
+        for k, ff in self.flatfield.items():
+            ff.save(outfile.with_suffix(f".flat_{k}.npz"))
 
     @staticmethod
     def load_data(file_prefix="tracking", loc=True, tracks=True,
-                  cell_images=True, profile_images=True, images=True):
+                  cell_images=True, flatfield=True, images=True):
         infile = Path(f"{file_prefix}-v{output_version:03}")
         with infile.with_suffix(".yaml").open() as f:
             cfg = io.yaml.safe_load(f)
 
-        ret = {"rois": cfg["rois"], "data_dir": Path(cfg.get("data_dir", "")),
+        ret = {"excitation_seq": cfg["excitation_seq"],
+               "rois": cfg["rois"], "data_dir": Path(cfg.get("data_dir", "")),
                "sources": cfg["sources"], "loc_options": cfg["loc_options"],
                "tracker": cfg["tracker"],
                "loc_data": collections.OrderedDict(),
                "track_data": collections.OrderedDict(),
                "cell_images": collections.OrderedDict(),
-               "profile_images": collections.OrderedDict()}
+               "flatfield": collections.OrderedDict()}
 
         do_load = []
         if loc:
@@ -380,15 +353,17 @@ class Tracker:
                     ret["cell_images"] = collections.OrderedDict(data)
             except Exception:
                 warnings.warn("Could not load cell images from file "
-                            f"\"{str(cell_img_file)}\".")
-            profile_img_file = infile.with_suffix(".profile_img.npz")
-        if profile_images:
-            try:
-                with np.load(profile_img_file) as data:
-                    ret["profile_images"] = collections.OrderedDict(data)
-            except Exception:
-                warnings.warn("Could not load profile images from file "
-                            f"\"{str(profile_img_file)}\".")
+                              f"\"{str(cell_img_file)}\".")
+        if flatfield:
+            flatfield_glob = str(infile.with_suffix(".flat_*.npz"))
+            key_re = re.compile(r"^\.flat_([\w\s-]+)")
+            for p in Path().glob(flatfield_glob):
+                m = key_re.match(p.suffixes[-2])
+                if m is None:
+                    warnings.warn("Could not load flatfield corrector from "
+                                  f"{str(p)}.")
+                else:
+                    ret["flatfield"][m.group(1)] = _flatfield.Corrector.load(p)
 
         return ret
 
@@ -400,8 +375,8 @@ class Tracker:
 
         ret = cls([0, 0], [0, 0], [0, 0], "")
 
-        for key in ("rois", "data_dir", "tracker", "loc_data", "track_data",
-                    "cell_images", "profile_images"):
+        for key in ("excitation_seq", "rois", "data_dir", "tracker",
+                    "loc_data", "track_data", "cell_images", "flatfield"):
             setattr(ret, key, cfg[key])
 
         src = cfg["sources"]
@@ -410,9 +385,8 @@ class Tracker:
         ret.sources = src
 
         for n, lo in cfg["loc_options"].items():
-            ret.locators[n].algorithm = lo["algorithm"]
-            ret.locators[n].set_settings(lo["options"])
+            ret.locators[n].set_settings(lo)
 
-        ret.exc_img_filter = FretImageSelector(ret.tracker.excitation_seq)
+        ret.exc_img_filter = FretImageSelector(ret.excitation_seq)
 
         return ret
