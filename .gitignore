@@ -5,6 +5,7 @@ __pycache__
 .spyproject
 *.kdev4
 .directory
+*.kate-swp
 
 # Ignore everything in the root dir since there will be data
 /*
