@@ -424,39 +424,6 @@ class Filter:
             warnings.simplefilter("ignore", tables.NaturalNameWarning)
 
             with pd.HDFStore(outfile.with_suffix(".h5")) as s:
-                for key, filt in self.track_filters.items():
-                    s["{}_trc".format(key)] = filt.tracks
-
-        yadict = {}
-        for k, v in self.beam_shapes.items():
-            if v is None or v.fit_result is None:
-                continue
-            yadict[k] = v.fit_result
-
-        with outfile.with_suffix(".yaml").open("w") as f:
-            io.yaml.safe_dump(dict(beam_shapes=yadict), f,
-                              default_flow_style=False)
-
-    def show_statistics(self, key):
-        fig, ax = plt.subplots()
-        data = self.statistics[key]
-
-        x = [d.op for d in data]
-        y = [(d.n_before - d.n_after) / d.n_before for d in data]
-        c = ["C0"] * len(x)
-
-        x.append("total")
-        y.append(1 - np.prod(1 - np.array(y)))
-        c.append("C1")
-
-        for i, v in enumerate(y):
-            if not v:
-                continue
-            ax.text(i, v - 0.02, f"{v:.3f}", ha="center", va="top",
-                    color="white", weight="bold")
-
-
-        ax.bar(x, y, color=c)
-        ax.set_xlabel("operation")
-        ax.set_ylabel("discarded fraction")
-        fig.autofmt_xdate()
+                for key, ana in self.analyzers.items():
+                    s.put(f"{key}_trc", ana.tracks.astype(
+                        {("fret", "exc_type"): str}))
