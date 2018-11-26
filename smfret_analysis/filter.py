@@ -12,12 +12,8 @@ import ipywidgets
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib import gridspec
-import pims
-import cv2
-from sklearn.cluster import AgglomerativeClustering
-from sklearn.mixture import GaussianMixture
 
-from sdt import io, roi, fret, chromatic, flatfield, helper, nbui, image, plot
+from sdt import io, roi, fret, helper, nbui, image, plot, changepoint
 
 from .version import output_version
 from .tracker import Tracker
@@ -36,16 +32,15 @@ class Filter:
 
         self.rois = cfg["rois"]
         self.cc = cfg["tracker"].chromatic_corr
-        self.track_filters = {k: fret.SmFretFilter(v)
-                              for k, v in cfg["track_data"].items()}
-        self.exc_scheme = "".join(cfg["tracker"].excitation_seq)
+        self.excitation_seq = cfg["excitation_seq"]
+        self.analyzers = {k: fret.SmFretAnalyzer(v, self.excitation_seq)
+                          for k, v in cfg["track_data"].items()}
         self.data_dir = cfg["data_dir"]
         self.sources = cfg["sources"]
         self.cell_images = cfg["cell_images"]
-        self.profile_images = cfg["profile_images"]
+        self.flatfield = cfg["flatfield"]
 
-        self.beam_shapes = {"donor": None, "acceptor": None}
-
+        self._segment_fig = None
         self._brightness_fig = None
         self._thresholder = None
         self._beam_shape_fig = None
@@ -53,53 +48,75 @@ class Filter:
         self._beta_population_fig = None
         self._eff_stoi_fig = None
 
-        self.statistics = {k: [] for k in self.track_filters.keys()}
+    def flag_excitation_type(self):
+        for a in self.analyzers.values():
+            a.flag_excitation_type()
 
-    def calc_beam_shape_sm(self, keys="all", weighted=False, frame=None):
-        if not len(keys):
-            return
-        if keys == "all":
-            keys = self.track_filters.keys()
+    def present_at_start(self, frame=None):
+        frame = self.excitation_seq.find("d") if frame is None else frame
+        for a in self.analyzers.values():
+            a.filter_particles(f"donor_frame == {frame}")
 
-        loop_var = [("donor", "d_mass",
-                     self.exc_scheme.find("d") if frame is None else frame),
-                    ("acceptor", "a_mass",
-                     self.exc_scheme.find("a") if frame is None else frame)]
-        for k, mk, f in loop_var:
-            r = self.rois[k]
+    def find_beam_shape_thresh(self):
+        if self._beam_shape_fig is None:
+            fig = plt.figure()
+            fig.add_subplot(1, 2, 1)
+            fig.add_subplot(1, 2, 2)
 
-            img_shape = (r.bottom_right[1] - r.top_left[1],
-                        r.bottom_right[0] - r.top_left[0])
-            data = [v.tracks_orig for k, v in self.track_filters.items()
-                    if k in keys]
-            data = [d[(d[k, "frame"] == f) & (d["fret", "interp"] == 0) &
-                    (d["fret", "has_neighbor"] == 0)]
-                    for d in data]
-            bs = flatfield.Corrector(
-                *data, columns={"coords": [(k, "x"), (k, "y")],
-                                "mass": ("fret", mk)},
-                shape=img_shape, density_weight=weighted)
+            self._beam_shape_fig = fig
 
-            self.beam_shapes[k] = bs
+        ax = self._beam_shape_fig.axes
 
-    def calc_beam_shape_bulk(self, smooth_sigma=3., gaussian_fit=False):
-        for chan, img in self.profile_images.items():
-            self.beam_shapes[chan] = flatfield.Corrector(
-                img, gaussian_fit=gaussian_fit, smooth_sigma=smooth_sigma)
+        channel_sel = ipywidgets.Dropdown(options=list(self.flatfield),
+                                          description="channel")
+        thresh_sel = ipywidgets.BoundedIntText(value=50, min=0, max=100,
+                                               description="threshold")
 
-    def filter_acc_bleach(self, brightness_thresh, truncate=True):
-        for k, f in self.track_filters.items():
-            b = len(f.tracks)
-            f.acceptor_bleach_step(brightness_thresh, truncate=truncate)
-            a = len(f.tracks)
-            self.statistics[k].append(StatItem("acc bleach", b, a))
+        def channel_changed(change=None):
+            bs = self.flatfield[channel_sel.value]
+            if self._beam_shape_artists[0] is not None:
+                self._beam_shape_artists[0].remove()
+            self._beam_shape_artists[0] = ax[0].imshow(bs.corr_img)
+            update()
+
+        def update(change=None):
+            bs = self.flatfield[channel_sel.value]
+            if self._beam_shape_artists[1] is not None:
+                self._beam_shape_artists[1].remove()
+            self._beam_shape_artists[1] = ax[1].imshow(
+                bs.corr_img * 100 > thresh_sel.value)
+            self._beam_shape_fig.tight_layout()
+            self._beam_shape_fig.canvas.draw()
+
+        channel_sel.observe(channel_changed, "value")
+        thresh_sel.observe(update, "value")
+
+        channel_changed()
+
+        return ipywidgets.VBox([channel_sel, thresh_sel,
+                                self._beam_shape_fig.canvas])
+
+    def filter_beam_shape_region(self, channel, thresh):
+        mask = self.flatfield[channel].corr_img * 100 > thresh
+        for a in self.analyzers.values():
+            a.image_mask(mask, channel)
+
+    def flatfield_correction(self):
+        for a in self.analyzers.values():
+            a.flatfield_correction(self.flatfield["donor"],
+                                   self.flatfield["acceptor"])
+
+    def calc_fret_values(self):
+        for a in self.analyzers.values():
+            a.calc_fret_values()
 
     def _make_dataset_selector(self, state, callback):
-        d_sel = ipywidgets.Dropdown(options=list(self.track_filters.keys()),
+        d_sel = ipywidgets.Dropdown(options=list(self.analyzers.keys()),
                                     description="dataset")
 
         def change_dataset(key=None):
-            trc = self.track_filters[d_sel.value].tracks
+            trc = self.analyzers[d_sel.value].tracks
+            state["id"] = d_sel.value
             state["trc"] = trc
             state["pnos"] = sorted(trc["fret", "particle"].unique())
             state["files"] = \
@@ -111,6 +128,75 @@ class Filter:
         change_dataset()
 
         return d_sel
+
+    def find_segment_a_mass_options(self):
+        state = {}
+
+        p_sel = ipywidgets.IntText(value=0, description="particle")
+        p_label = ipywidgets.Label()
+        pen_sel = ipywidgets.FloatText(value=2e7, description="penalty")
+
+        if self._segment_fig is None:
+            self._segment_fig, ax = plt.subplots(1, 3, figsize=(8, 4))
+            ax[1].twinx()
+
+        ax_dm, ax_am, ax_eff, ax_hn = self._segment_fig.axes
+
+        def show_track(change=None):
+            for a in self._segment_fig.axes:
+                a.cla()
+
+            pi = state["pnos"][p_sel.value]
+            p_label.value = f"Real particle number: {pi}"
+            trc = state["trc"]
+            t = trc[trc["fret", "particle"] == pi]
+            td = t[t["fret", "exc_type"] == "d"]
+            ta = t[t["fret", "exc_type"] == "a"]
+
+            fd = td["donor", "frame"].values
+            dm = td["fret", "d_mass"].values
+            fa = ta["donor", "frame"].values
+            am = ta["fret", "a_mass"].values
+            ef = td["fret", "eff_app"].values
+            hn = td["fret", "has_neighbor"].values
+
+            cp_a = self.analyzers[state["id"]].cp_detector.find_changepoints(
+                am, pen_sel.value) - 1
+            cp_d = np.searchsorted(fd, fa[cp_a]) - 1
+            if len(fd):
+                changepoint.plot_changepoints(dm, cp_d, time=fd, ax=ax_dm)
+                changepoint.plot_changepoints(ef, cp_d, time=fd, ax=ax_eff)
+            if len(fa):
+                changepoint.plot_changepoints(am, cp_a, time=fa, ax=ax_am)
+            ax_hn.plot(fd, hn, c="C2", alpha=0.2)
+
+            ax_dm.relim(visible_only=True)
+            ax_am.relim(visible_only=True)
+            ax_eff.set_ylim(-0.05, 1.05)
+            ax_hn.set_ylim(-0.05, 1.05)
+
+            ax_dm.set_title("d_mass")
+            ax_am.set_title("a_mass")
+            ax_eff.set_title("app. eff")
+
+            self._segment_fig.tight_layout()
+            self._segment_fig.canvas.draw()
+
+        p_sel.observe(show_track, "value")
+        pen_sel.observe(show_track, "value")
+
+        d_sel = self._make_dataset_selector(state, show_track)
+
+        return ipywidgets.VBox([d_sel, p_sel, pen_sel,
+                                self._segment_fig.canvas, p_label])
+
+    def segment_a_mass(self, **kwargs):
+        for a in self.analyzers.values():
+            a.segment_a_mass(**kwargs)
+
+    def filter_acc_bleach(self, brightness_thresh):
+        for a in self.analyzers.values():
+            a.acceptor_bleach_step(brightness_thresh, truncate=False)
 
     def plot_eff_vs_stoi(self):
         if self._eff_stoi_fig is None:
@@ -135,28 +221,7 @@ class Filter:
 
         return ipywidgets.VBox([d_sel, self._eff_stoi_fig.canvas])
 
-    @staticmethod
-    def _gmm_split(data, n_components):
-        d = data.loc[:, [("fret", "eff"), ("fret", "stoi")]].values
-        valid = np.all(np.isfinite(d), axis=1)
-        d =  d[valid]
-        data = data[valid].copy()
-        gmm = GaussianMixture(n_components=n_components).fit(d)
-        labels = gmm.predict(d)
-        labels = np.argsort(gmm.means_[:, 0])[::-1][labels]  # sort according to descendent mean
-        data["__gmm_labels__"] = labels
-
-        split = collections.OrderedDict([(l, [])
-                                         for l in np.sort(np.unique(labels))])
-        for p, df in data.groupby(("fret", "particle")):
-            comp, cnt = np.unique(df["__gmm_labels__"].values,
-                                  return_counts=True)
-            split[comp[np.argmax(cnt)]].append(df)
-
-        return {k: pd.concat(v).drop("__gmm_labels__", 1, level=0)
-                for k, v in split.items()}
-
-    def select_beta_population(self):
+    def find_excitation_eff_component(self):
         if self._beta_population_fig is None:
             self._beta_population_fig, _ = plt.subplots()
 
@@ -166,16 +231,21 @@ class Filter:
 
         cmaps = ["viridis", "gray", "plasma", "jet"]
         def update(change=None):
-            split = Filter._gmm_split(state["trc"], n_comp_sel.value)
+            d = state["trc"]
+            d = d[d["fret", "a_seg"] == 0].copy()
+            split = fret.gaussian_mixture_split(d, n_comp_sel.value)
 
             ax = self._beta_population_fig.axes[0]
             ax.cla()
-            for (l, v), cm in zip(split.items(), itertools.cycle(cmaps)):
-                color = f"C{l % 10}" if l >= 0 else "black"
-                plot.density_scatter(v["fret", "eff"], v["fret", "stoi"],
-                                     marker=".", label=str(l), ax=ax,
-                                     cmap=cm)
-            #ax.legend(loc=0)
+            for v, cm in zip(split, itertools.cycle(cmaps)):
+                sel = (d["fret", "particle"].isin(v) &
+                       np.isfinite(d["fret", "eff_app"]) &
+                       np.isfinite(d["fret", "stoi_app"]))
+                plot.density_scatter(d.loc[sel, ("fret", "eff_app")],
+                                     d.loc[sel, ("fret", "stoi_app")],
+                                    marker=".", label=f"{len(v)}", ax=ax,
+                                    cmap=cm)
+            ax.legend(loc=0)
             ax.set_xlabel("apparent eff.")
             ax.set_ylabel("apparent stoi.")
             self._beta_population_fig.canvas.draw()
@@ -185,6 +255,58 @@ class Filter:
 
         return ipywidgets.VBox([d_sel, n_comp_sel,
                                 self._beta_population_fig.canvas])
+
+    def set_leakage(self, leakage):
+        for a in self.analyzers.values():
+            a.leakage = leakage
+
+    def calc_leakage(self, dataset):
+        a = self.analyzers[dataset]
+        a.calc_leakage()
+        self.set_leakage(a.leakage)
+
+    def set_direct_excitation(self, dir_exc):
+        for a in self.analyzers.values():
+            a.direct_excitation = dir_exc
+
+    def calc_direct_excitation(self, dataset):
+        a = self.analyzers[dataset]
+        a.calc_direct_excitation()
+        self.set_leakage(a.direct_excitation)
+
+    def set_detection_eff(self, eff):
+        for a in self.analyzers.values():
+            a.detection_eff = eff
+
+    def calc_detection_eff(self, min_part_len=5, how="individual",
+                           aggregate="dataset", dataset=None):
+        if how == "individual" or aggregate == "dataset":
+            for a in self.analyzers.values():
+                a.calc_detection_eff(min_part_len, how)
+        else:
+            if dataset is not None:
+                a = self.analyzers[dataset]
+                a.calc_detection_eff(min_part_len, how)
+                self.set_detection_eff(a.detection_eff)
+            else:
+                effs = []
+                for a in self.analyzers.values():
+                    a.calc_detection_eff(min_part_len, "individual")
+                    effs.append(a.detection_eff)
+                self.set_detection_eff(how(pd.concat(effs)))
+
+    def set_excitation_eff(self, eff):
+        for a in self.analyzers.values():
+            a.excitation_eff = eff
+
+    def calc_excitation_eff(self, dataset, n_components=1, component=0):
+        a = self.analyzers[dataset]
+        a.calc_excitation_eff(n_components, component)
+        self.set_excitation_eff(a.excitation_eff)
+
+    def fret_correction(self):
+        for a in self.analyzers.values():
+            a.fret_correction()
 
     def find_brightness_params(self, frame=None):
         state = {"picked": []}
@@ -206,13 +328,15 @@ class Filter:
         es_ax, br_ax, t_ax = self._brightness_fig.axes
 
         f_sel = ipywidgets.IntText(
-            value=self.exc_scheme.find("d") if frame is None else frame,
+            value=self.excitation_seq.find("d") if frame is None else frame,
             description="frame")
 
         def set_frame(change=None):
             trc = state["trc"]
-            state["cur_trc"] = trc[(trc["donor", "frame"] == f_sel.value) &
-                                   (trc["fret", "has_neighbor"] == 0)]
+            sel = trc["fret", "has_neighbor"] == 0
+            if f_sel.value >= 0:
+                sel &= trc["donor", "frame"] == f_sel.value
+            state["cur_trc"] = trc[sel]
 
             plot_scatter()
             plot_time_trace()
@@ -258,14 +382,6 @@ class Filter:
             a = len(f.tracks)
             self.statistics[k].append(StatItem("query", b, a))
 
-    def present_at_start(self, frame=None):
-        frame = self.exc_scheme.find("d") if frame is None else frame
-        for k, f in self.track_filters.items():
-            b = len(f.tracks)
-            f.filter_particles(f"donor_frame == {frame}")
-            a = len(f.tracks)
-            self.statistics[k].append(StatItem("at start", b, a))
-
     def find_cell_mask_params(self):
         if self._thresholder is None:
             self._thresholder = nbui.Thresholder()
@@ -293,55 +409,6 @@ class Filter:
 
             a = len(filt.tracks)
             self.statistics[k].append(StatItem("cell mask", b, a))
-
-    def find_beam_shape_thresh(self):
-        if self._beam_shape_fig is None:
-            fig = plt.figure()
-            fig.add_subplot(1, 2, 1)
-            fig.add_subplot(1, 2, 2)
-
-            self._beam_shape_fig = fig
-
-        ax = self._beam_shape_fig.axes
-
-        channel_sel = ipywidgets.Dropdown(options=list(self.beam_shapes),
-                                          description="channel")
-        thresh_sel = ipywidgets.BoundedIntText(value=75, min=0, max=100,
-                                               description="threshold")
-
-        bs = self.beam_shapes[channel_sel.value]
-
-        def channel_changed(change=None):
-            bs = self.beam_shapes[channel_sel.value]
-            if self._beam_shape_artists[0] is not None:
-                self._beam_shape_artists[0].remove()
-            self._beam_shape_artists[0] = ax[0].imshow(bs.corr_img)
-            update()
-
-        def update(change=None):
-            bs = self.beam_shapes[channel_sel.value]
-            if self._beam_shape_artists[1] is not None:
-                self._beam_shape_artists[1].remove()
-            self._beam_shape_artists[1] = ax[1].imshow(
-                bs.corr_img * 100 > thresh_sel.value)
-            self._beam_shape_fig.tight_layout()
-            self._beam_shape_fig.canvas.draw()
-
-        channel_sel.observe(channel_changed, "value")
-        thresh_sel.observe(update, "value")
-
-        channel_changed()
-
-        return ipywidgets.VBox([channel_sel, thresh_sel,
-                                self._beam_shape_fig.canvas])
-
-    def filter_beam_shape_region(self, channel, thresh):
-        mask = self.beam_shapes[channel].corr_img * 100 > thresh
-        for k, f in self.track_filters.items():
-            b = len(f.tracks)
-            f.image_mask(mask, channel)
-            a = len(f.tracks)
-            self.statistics[k].append(StatItem("beam shape", b, a))
 
     def save(self, file_prefix="filtered"):
         outfile = Path(f"{file_prefix}-v{output_version:03}")
