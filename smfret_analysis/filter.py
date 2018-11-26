@@ -280,20 +280,29 @@ class Filter:
 
     def calc_detection_eff(self, min_part_len=5, how="individual",
                            aggregate="dataset", dataset=None):
-        if how == "individual" or aggregate == "dataset":
-            for a in self.analyzers.values():
-                a.calc_detection_eff(min_part_len, how)
-        else:
+        if callable(how):
             if dataset is not None:
                 a = self.analyzers[dataset]
                 a.calc_detection_eff(min_part_len, how)
                 self.set_detection_eff(a.detection_eff)
-            else:
+            elif aggregate == "dataset":
+                for a in self.analyzers.values():
+                    a.calc_detection_eff(min_part_len, how)
+            elif aggregate == "all":
                 effs = []
                 for a in self.analyzers.values():
                     a.calc_detection_eff(min_part_len, "individual")
                     effs.append(a.detection_eff)
                 self.set_detection_eff(how(pd.concat(effs)))
+            else:
+                raise ValueError(
+                    "`aggregate` must be in {\"dataset\", \"all\"}.")
+        elif how == "individual":
+            for a in self.analyzers.values():
+                a.calc_detection_eff(min_part_len, how)
+        else:
+            raise ValueError(
+                "`how` must be either callable or \"individual\".")
 
     def set_excitation_eff(self, eff):
         for a in self.analyzers.values():
