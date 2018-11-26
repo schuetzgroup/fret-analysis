@@ -19,14 +19,7 @@ from .version import output_version
 from .tracker import Tracker
 
 
-class StatItem:
-    def __init__(self, op, n_before, n_after):
-        self.op = op
-        self.n_before = n_before
-        self.n_after = n_after
-
-
-class Filter:
+class Analyzer:
     def __init__(self, file_prefix="tracking"):
         cfg = Tracker.load_data(file_prefix, loc=False)
 
