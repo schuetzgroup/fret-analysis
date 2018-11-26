@@ -55,7 +55,7 @@ class Filter:
     def present_at_start(self, frame=None):
         frame = self.excitation_seq.find("d") if frame is None else frame
         for a in self.analyzers.values():
-            a.filter_particles(f"donor_frame == {frame}")
+            a.query_particles(f"donor_frame == {frame}")
 
     def find_beam_shape_thresh(self):
         if self._beam_shape_fig is None:
