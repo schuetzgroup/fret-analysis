@@ -401,24 +401,20 @@ class Filter:
 
         return self._thresholder
 
-    def apply_cell_masks(self, method="adaptive", **kwargs):
+    def apply_cell_masks(self, thresh_algorithm="adaptive", **kwargs):
         for k, v in self.sources.items():
-            filt = self.track_filters[k]
-            b = len(filt.tracks)
+            ana = self.analyzers[k]
 
-            if isinstance(method, str):
-                method = getattr(image, method + "_thresh")
+            if isinstance(thresh_algorithm, str):
+                thresh_algorithm = getattr(image, thresh_algorithm + "_thresh")
 
             if v["cells"]:
-                trc = filt.tracks
+                trc = ana.tracks
 
                 files = np.unique(trc.index.levels[0])
-                mask = [(f, method(self.cell_images[f][0], **kwargs))
+                mask = [(f, thresh_algorithm(self.cell_images[f][0], **kwargs))
                         for f in files]
-                filt.image_mask(mask, channel="donor")
-
-            a = len(filt.tracks)
-            self.statistics[k].append(StatItem("cell mask", b, a))
+                ana.image_mask(mask, channel="donor")
 
     def save(self, file_prefix="filtered"):
         outfile = Path(f"{file_prefix}-v{output_version:03}")
