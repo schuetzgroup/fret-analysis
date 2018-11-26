@@ -313,9 +313,9 @@ class Filter:
         a.calc_excitation_eff(n_components, component)
         self.set_excitation_eff(a.excitation_eff)
 
-    def fret_correction(self):
+    def fret_correction(self, *args, **kwargs):
         for a in self.analyzers.values():
-            a.fret_correction()
+            a.fret_correction(*args, **kwargs)
 
     def find_brightness_params(self, frame=None):
         state = {"picked": []}
