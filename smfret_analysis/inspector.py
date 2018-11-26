@@ -14,11 +14,12 @@ from .tracker import Tracker
 
 class Inspector:
     def __init__(self, file_prefix="tracking"):
-        tr = Tracker.load(file_prefix, loc=False)
-        self.track_data = tr.track_data
-        self.exc_scheme = "".join(tr.tracker.excitation_seq)
-        self.rois = tr.rois
-        self.data_dir = tr.data_dir
+        cfg = Tracker.load_data(file_prefix, loc=False)
+
+        self.track_data = cfg["track_data"]
+        self.excitation_seq = cfg["excitation_seq"]
+        self.rois = cfg["rois"]
+        self.data_dir = cfg["data_dir"]
 
     def make_dataset_selector(self, state, callback):
         d_sel = ipywidgets.Dropdown(options=list(self.track_data.keys()),
@@ -37,7 +38,6 @@ class Inspector:
 
         return d_sel
 
-
     def mark_track(self):
         state = {}
 
@@ -54,7 +54,7 @@ class Inspector:
             fname = df.iloc[0].name[0]
             fname_label.value = fname
 
-            exc = np.array(list(self.exc_scheme))
+            exc = np.array(list(self.excitation_seq))
             d_frames = np.nonzero(exc == "d")[0]
             a_frames = np.nonzero(exc == "a")[0]
 
@@ -116,22 +116,19 @@ class Inspector:
 
         fig, ax = plt.subplots()
         p_sel = ipywidgets.IntText(description="particle")
-        eff_label = ipywidgets.Label()
 
         def show_track(particle=None):
             ax.cla()
             p = state["pnos"][p_sel.value]
             tr = state["tr"]
             t = tr[tr["fret", "particle"] == p]
-            c = ax.plot(t["donor", "x"], t["donor", "y"],
-                        c=mpl.cm.jet(t["fret", "eff"].mean()), marker=".")
-            eff_label.value = f'Mean eff.: {t["fret", "eff"].mean()}'
+            c = ax.plot(t["donor", "x"], t["donor", "y"], marker=".")
             fig.canvas.draw()
 
         p_sel.observe(show_track, names="value")
 
         d_sel = self.make_dataset_selector(state, show_track)
-        box = ipywidgets.VBox([d_sel, p_sel, fig.canvas, eff_label])
+        box = ipywidgets.VBox([d_sel, p_sel, fig.canvas])
         display(box)
 
     def raw_features(self, figsize=(8, 8), n_cols=8, img_size=3):
