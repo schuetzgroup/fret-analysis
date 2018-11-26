@@ -20,7 +20,8 @@ class Plotter:
                 if not k.endswith("_trc"):
                     continue
                 key = k.lstrip("/")[:-4]
-                self.track_data[key] = s[k]
+                self.track_data[key] = s[k].astype(
+                    {("fret", "exc_type"): "category"})
 
     def scatter(self, *args, **kwargs):
         return fret.smfret_scatter(self.track_data, *args, **kwargs)
