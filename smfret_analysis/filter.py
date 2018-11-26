@@ -388,6 +388,10 @@ class Filter:
         for a in self.analyzers.values():
             a.query(expr, mi_sep)
 
+    def query_particles(self, expr, min_abs=1, min_rel=0., mi_sep="_"):
+        for a in self.analyzers.values():
+            a.query_particles(expr, min_abs, min_rel, mi_sep)
+
     def find_cell_mask_params(self):
         if self._thresholder is None:
             self._thresholder = nbui.Thresholder()
