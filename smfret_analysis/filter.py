@@ -106,9 +106,9 @@ class Filter:
             a.flatfield_correction(self.flatfield["donor"],
                                    self.flatfield["acceptor"])
 
-    def calc_fret_values(self):
+    def calc_fret_values(self, *args, **kwargs):
         for a in self.analyzers.values():
-            a.calc_fret_values()
+            a.calc_fret_values(*args, **kwargs)
 
     def _make_dataset_selector(self, state, callback):
         d_sel = ipywidgets.Dropdown(options=list(self.analyzers.keys()),
