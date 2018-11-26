@@ -385,11 +385,8 @@ class Filter:
         return ipywidgets.VBox([d_sel, f_sel, self._brightness_fig.canvas])
 
     def query(self, expr, mi_sep="_"):
-        for k, f in self.track_filters.items():
-            b = len(f.tracks)
-            f.query(expr, mi_sep)
-            a = len(f.tracks)
-            self.statistics[k].append(StatItem("query", b, a))
+        for a in self.analyzers.values():
+            a.query(expr, mi_sep)
 
     def find_cell_mask_params(self):
         if self._thresholder is None:
