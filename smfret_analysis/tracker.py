@@ -174,7 +174,8 @@ class Tracker:
 
     def track(self, feat_radius=4, bg_frame=3, link_radius=1, link_mem=1,
               min_length=4, bg_estimator="mean",
-              image_filter=lambda i: image.gaussian_filter(i, 1)):
+              image_filter=lambda i: image.gaussian_filter(i, 1),
+              neighbor_radius=None):
         num_files = sum(len(s["files"]) for s in self.sources.values())
         cnt = 1
         label = ipywidgets.Label(value="Starting…")
@@ -186,6 +187,10 @@ class Tracker:
                                                 "bg_frame": bg_frame,
                                                 "bg_estimator": bg_estimator})
         self.tracker.min_length = min_length
+        if neighbor_radius is not None:
+            self.tracker.neighbor_radius = neighbor_radius
+        else:
+            self.tracker.neighbor_radius = 2 * feat_radius + 1
 
         for key, src in self.sources.items():
             ret = []
