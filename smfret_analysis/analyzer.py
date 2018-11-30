@@ -420,3 +420,15 @@ class Analyzer:
                 for key, ana in self.analyzers.items():
                     s.put(f"{key}_trc", ana.tracks.astype(
                         {("fret", "exc_type"): str}))
+
+    @staticmethod
+    def load_data(file_prefix="filtered"):
+        ret = collections.OrderedDict()
+        infile = Path(f"{file_prefix}-v{output_version:03}.h5")
+        with pd.HDFStore(infile, "r") as s:
+            for k in s.keys():
+                if not k.endswith("_trc"):
+                    continue
+                key = k.lstrip("/")[:-4]
+                ret[key] = s[k].astype({("fret", "exc_type"): "category"})
+        return ret
