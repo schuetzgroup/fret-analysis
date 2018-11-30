@@ -202,8 +202,7 @@ class Inspector:
 
             data = state["tr"]
             for p in particles:
-                d = data[(data["fret", "particle"] == p) &
-                        (data["fret", "exc_type"] == 0)]
+                d = data[(data["fret", "particle"] == p)]
                 for a, (x, y) in zip(ax, axes):
                     a.plot(d[x], d[y], ".-")
                     a.set_xlabel(" ".join(x))
