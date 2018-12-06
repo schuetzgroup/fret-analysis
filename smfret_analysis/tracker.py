@@ -262,33 +262,35 @@ class Tracker:
         self.flatfield[dest] = _flatfield.Corrector(
             imgs, smooth_sigma=smooth_sigma, gaussian_fit=gaussian_fit)
 
-    # Just copied over from Filter to preserve; port once needed.
-    # def make_flatfield_sm(self, keys="all", weighted=False, frame=None):
-    #     if not len(keys):
-    #         return
-    #     if keys == "all":
-    #         keys = self.track_filters.keys()
-    #
-    #     loop_var = [("donor", "d_mass",
-    #                  self.exc_scheme.find("d") if frame is None else frame),
-    #                 ("acceptor", "a_mass",
-    #                  self.exc_scheme.find("a") if frame is None else frame)]
-    #     for k, mk, f in loop_var:
-    #         r = self.rois[k]
-    #
-    #         img_shape = (r.bottom_right[1] - r.top_left[1],
-    #                     r.bottom_right[0] - r.top_left[0])
-    #         data = [v.tracks_orig for k, v in self.track_filters.items()
-    #                 if k in keys]
-    #         data = [d[(d[k, "frame"] == f) & (d["fret", "interp"] == 0) &
-    #                 (d["fret", "has_neighbor"] == 0)]
-    #                 for d in data]
-    #         bs = flatfield.Corrector(
-    #             *data, columns={"coords": [(k, "x"), (k, "y")],
-    #                             "mass": ("fret", mk)},
-    #             shape=img_shape, density_weight=weighted)
-    #
-    #         self.beam_shapes[k] = bs
+    def make_flatfield_sm(self, dest, keys="all", weighted=False, frame=None):
+        if not len(keys):
+            return
+        if keys == "all":
+            keys = self.track_data.keys()
+
+        if frame is None:
+            frame = self.excitation_seq.find(dest[0])
+
+        data = []
+        for k in keys:
+            d = self.track_data[k]
+            d = d[(d[dest, "frame"] == frame) &
+                  (d["fret", "interp"] == 0) &
+                  (d["fret", "has_neighbor"] == 0)]
+            if dest.startswith("d"):
+                mass = d["donor", "mass"] + d["acceptor", "mass"]
+            else:
+                mass = d[dest, "mass"]
+            d = d[[(dest, "x"), (dest, "y")]].copy()
+            d.columns = ["x", "y"]
+            d["mass"] = mass
+            data.append(d)
+
+        r = self.rois[dest]
+        img_shape = (r.bottom_right[1] - r.top_left[1],
+                     r.bottom_right[0] - r.top_left[0])
+        self.flatfield[dest] = _flatfield.Corrector(*data, shape=img_shape,
+                                                    density_weight=weighted)
 
     def save(self, file_prefix="tracking"):
         loc_options = collections.OrderedDict(
