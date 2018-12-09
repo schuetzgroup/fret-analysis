@@ -251,7 +251,7 @@ class Tracker:
 
         for f in files:
             with pims.open(str(self.data_dir / f)) as fr:
-                imgs.append(self.rois[src](fr[frame]) - bg)
+                imgs.append(self.rois[src](fr[frame].astype(float)) - bg)
 
         if src == "acceptor" and dest == "donor":
             imgs = [self.tracker.chromatic_corr(i, channel=2) for i in imgs]
