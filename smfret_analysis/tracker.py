@@ -346,12 +346,13 @@ class Tracker:
             do_load.append((ret["loc_data"], "_loc"))
         if tracks:
             do_load.append((ret["track_data"], "_trc"))
-        with pd.HDFStore(infile.with_suffix(".h5"), "r") as s:
-            for sink, suffix in do_load:
-                keys = (k for k in s.keys() if k.endswith(suffix))
-                for k in keys:
-                    new_key = k[1:-len(suffix)]
-                    sink[new_key] = s[k]
+        if len(do_load):
+            with pd.HDFStore(infile.with_suffix(".h5"), "r") as s:
+                for sink, suffix in do_load:
+                    keys = (k for k in s.keys() if k.endswith(suffix))
+                    for k in keys:
+                        new_key = k[1:-len(suffix)]
+                        sink[new_key] = s[k]
 
         if cell_images:
             cell_img_file = infile.with_suffix(".cell_img.npz")
