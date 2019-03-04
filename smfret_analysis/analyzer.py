@@ -266,6 +266,33 @@ class Analyzer:
         a.calc_leakage()
         self.set_leakage(a.leakage)
 
+    def calc_leakage_from_bleached(self, datasets=None, print_summary=False):
+        if datasets is None:
+            datasets = list(self.analyzers)
+        elif isinstance(datasets, str):
+            datasets = [datasets]
+
+        effs = []
+        for d in datasets:
+            trc = self.analyzers[d].tracks
+            # search for donor excitation frames where acceptor is bleached
+            # but donor isn't
+            sel = ((trc["fret", "exc_type"] == "d") &
+                   (trc["fret", "has_neighbor"] == 0) &
+                   (trc["fret", "a_seg"] == 1) &
+                   (trc["fret", "d_seg"] == 0))
+            effs.append(trc.loc[sel, ("fret", "eff_app")].values)
+        effs = np.concatenate(effs)
+
+        n_data = len(effs)
+        m_eff = np.mean(effs)
+        leakage = m_eff / (1 - m_eff)
+
+        self.set_leakage(leakage)
+
+        if print_summary:
+            print(f"leakage: {leakage:.4f} (from {n_data} datapoints)")
+
     def set_direct_excitation(self, dir_exc):
         for a in self.analyzers.values():
             a.direct_excitation = dir_exc
@@ -273,7 +300,35 @@ class Analyzer:
     def calc_direct_excitation(self, dataset):
         a = self.analyzers[dataset]
         a.calc_direct_excitation()
-        self.set_leakage(a.direct_excitation)
+        self.set_direct_excitation(a.direct_excitation)
+
+    def calc_direct_excitation_from_bleached(self, datasets=None,
+                                             print_summary=False):
+        if datasets is None:
+            datasets = list(self.analyzers)
+        elif isinstance(datasets, str):
+            datasets = [datasets]
+
+        stois = []
+        for d in datasets:
+            trc = self.analyzers[d].tracks
+            # search for donor excitation frames where donor is bleached
+            # but acceptor isn't
+            sel = ((trc["fret", "exc_type"] == "d") &
+                   (trc["fret", "has_neighbor"] == 0) &
+                   (trc["fret", "a_seg"] == 0) &
+                   (trc["fret", "d_seg"] == 1))
+            stois.append(trc.loc[sel, ("fret", "stoi_app")].values)
+        stois = np.concatenate(stois)
+
+        n_data = len(stois)
+        m_stoi = np.mean(stois)
+        dir_exc = m_stoi / (1 - m_stoi)
+
+        self.set_direct_excitation(dir_exc)
+
+        if print_summary:
+            print(f"direct exc.: {dir_exc:.4f} (from {n_data} datapoints)")
 
     def set_detection_eff(self, eff):
         for a in self.analyzers.values():
