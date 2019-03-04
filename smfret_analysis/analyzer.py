@@ -122,12 +122,13 @@ class Analyzer:
 
         return d_sel
 
-    def find_segment_a_mass_options(self):
+    def find_segment_options(self):
         state = {}
 
         p_sel = ipywidgets.IntText(value=0, description="particle")
         p_label = ipywidgets.Label()
-        pen_sel = ipywidgets.FloatText(value=2e7, description="penalty")
+        pen_a_sel = ipywidgets.FloatText(value=2e7, description="acc. penalty")
+        pen_d_sel = ipywidgets.FloatText(value=2e7, description="don. penalty")
 
         if self._segment_fig is None:
             self._segment_fig, ax = plt.subplots(1, 3, figsize=(8, 4))
@@ -154,11 +155,17 @@ class Analyzer:
             hn = td["fret", "has_neighbor"].values
 
             cp_a = self.analyzers[state["id"]].cp_detector.find_changepoints(
-                am, pen_sel.value) - 1
-            cp_d = np.searchsorted(fd, fa[cp_a]) - 1
+                am, pen_a_sel.value) - 1
+            cp_d = self.analyzers[state["id"]].cp_detector.find_changepoints(
+                dm, pen_d_sel.value) - 1
+            cp_d_all = np.concatenate([np.searchsorted(fd, fa[cp_a]) - 1,
+                                       cp_d])
+            cp_d_all = np.unique(cp_d_all)
+            cp_d_all.sort()
+
             if len(fd):
                 changepoint.plot_changepoints(dm, cp_d, time=fd, ax=ax_dm)
-                changepoint.plot_changepoints(ef, cp_d, time=fd, ax=ax_eff)
+                changepoint.plot_changepoints(ef, cp_d_all, time=fd, ax=ax_eff)
             if len(fa):
                 changepoint.plot_changepoints(am, cp_a, time=fa, ax=ax_am)
             ax_hn.plot(fd, hn, c="C2", alpha=0.2)
@@ -176,20 +183,21 @@ class Analyzer:
             self._segment_fig.canvas.draw()
 
         p_sel.observe(show_track, "value")
-        pen_sel.observe(show_track, "value")
+        pen_d_sel.observe(show_track, "value")
+        pen_a_sel.observe(show_track, "value")
 
         d_sel = self._make_dataset_selector(state, show_track)
 
-        return ipywidgets.VBox([d_sel, p_sel, pen_sel,
+        return ipywidgets.VBox([d_sel, p_sel, pen_d_sel, pen_a_sel,
                                 self._segment_fig.canvas, p_label])
 
-    def segment_a_mass(self, **kwargs):
+    def segment_mass(self, channel, **kwargs):
         for a in self.analyzers.values():
-            a.segment_a_mass(**kwargs)
+            a.segment_mass(channel, **kwargs)
 
-    def filter_acc_bleach(self, brightness_thresh):
+    def filter_bleach_step(self, donor_thresh, acceptor_thresh):
         for a in self.analyzers.values():
-            a.acceptor_bleach_step(brightness_thresh, truncate=False)
+            a.bleach_step(donor_thresh, acceptor_thresh, truncate=False)
 
     def plot_eff_vs_stoi(self):
         if self._eff_stoi_fig is None:
