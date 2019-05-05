@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 
 from sdt import roi, chromatic, io, image, fret, changepoint, helper
 from sdt import flatfield as _flatfield  # avoid name clashes
-from sdt.fret import SmFretTracker, FretImageSelector
+from sdt.fret import SmFretTracker, FrameSelector
 from sdt.loc import daostorm_3d
 from sdt.nbui import Locator
 
@@ -33,9 +33,7 @@ class Tracker:
         self.rois = dict(
             donor=roi.ROI(don_o, size=roi_size),
             acceptor=roi.ROI(acc_o, size=roi_size))
-        self.excitation_seq = excitation_seq
-        self.tracker = SmFretTracker()
-        self.exc_img_filter = FretImageSelector(excitation_seq)
+        self.tracker = SmFretTracker(excitation_seq)
         self.sources = collections.OrderedDict()
 
         self.loc_data = collections.OrderedDict()
@@ -109,7 +107,7 @@ class Tracker:
                                         for f in files])
 
     def donor_sum(self, fr):
-        fr = self.exc_img_filter(fr, "d")
+        fr = self.tracker.frame_selector(fr, "d")
         fr_d = self.tracker.chromatic_corr(self.rois["donor"](fr), channel=1,
                                            cval=np.mean)
         fr_a = self.rois["acceptor"](fr)
@@ -133,7 +131,8 @@ class Tracker:
                      for k, v in self.sources[d_sel.value]["files"].items()}
             elif exc_type.startswith("a"):
                 loc.files = \
-                    {k: self.rois["acceptor"](self.exc_img_filter(v, "a"))
+                    {k: self.rois["acceptor"](
+                         self.tracker.frame_selector(v, "a"))
                      for k, v in self.sources[d_sel.value]["files"].items()}
 
         set_files()
@@ -159,7 +158,8 @@ class Tracker:
                 lo = self.locators["donor"].batch_func(
                     don_fr, **self.locators["donor"].options)
 
-                acc_fr = self.rois["acceptor"](self.exc_img_filter(fr, "a"))
+                acc_fr = self.rois["acceptor"](
+                    self.tracker.frame_selector(fr, "a"))
                 if len(acc_fr):
                     lo_a = self.locators["acceptor"].batch_func(
                         acc_fr, **self.locators["acceptor"].options)
@@ -231,15 +231,13 @@ class Tracker:
             self.track_data[key] = pd.concat(ret, keys=ret_keys)
 
     def extract_cell_images(self, key="c"):
-        sel = FretImageSelector(self.excitation_seq)
-
         for k, v in self.sources.items():
             if not v["cells"]:
                 # no cells
                 continue
             for f, fr in v["files"].items():
                 don_fr = self.rois["donor"](fr)
-                cell_fr = np.array(sel(don_fr, key))
+                cell_fr = np.array(self.tracker.frame_selector(don_fr, key))
                 self.cell_images[f] = cell_fr
 
     def make_flatfield(self, dest, files_re, src=None, frame=0, bg=200,
@@ -303,7 +301,6 @@ class Tracker:
             src[k] = v_new
 
         top = collections.OrderedDict(
-            excitation_seq=self.excitation_seq,
             tracker=self.tracker, rois=self.rois, loc_options=loc_options,
             data_dir=str(self.data_dir), sources=src)
         outfile = Path(f"{file_prefix}-v{output_version:03}")
@@ -332,8 +329,7 @@ class Tracker:
         with infile.with_suffix(".yaml").open() as f:
             cfg = io.yaml.safe_load(f)
 
-        ret = {"excitation_seq": cfg["excitation_seq"],
-               "rois": cfg["rois"], "data_dir": Path(cfg.get("data_dir", "")),
+        ret = {"rois": cfg["rois"], "data_dir": Path(cfg.get("data_dir", "")),
                "sources": cfg["sources"], "loc_options": cfg["loc_options"],
                "tracker": cfg["tracker"],
                "loc_data": collections.OrderedDict(),
@@ -383,8 +379,8 @@ class Tracker:
 
         ret = cls([0, 0], [0, 0], [0, 0], "")
 
-        for key in ("excitation_seq", "rois", "data_dir", "tracker",
-                    "loc_data", "track_data", "cell_images", "flatfield"):
+        for key in ("rois", "data_dir", "tracker", "loc_data", "track_data",
+                    "cell_images", "flatfield"):
             setattr(ret, key, cfg[key])
 
         src = cfg["sources"]
@@ -394,7 +390,5 @@ class Tracker:
 
         for n, lo in cfg["loc_options"].items():
             ret.locators[n].set_settings(lo)
-
-        ret.exc_img_filter = FretImageSelector(ret.excitation_seq)
 
         return ret
