@@ -17,7 +17,7 @@ class Inspector:
         cfg = Tracker.load_data(file_prefix, loc=False)
 
         self.track_data = cfg["track_data"]
-        self.excitation_seq = cfg["excitation_seq"]
+        self.excitation_seq = cfg["tracker"].excitation_seq
         self.rois = cfg["rois"]
         self.data_dir = cfg["data_dir"]
 
@@ -54,7 +54,6 @@ class Inspector:
             fname = df.iloc[0].name[0]
             fname_label.value = fname
 
-            exc = np.array(list(self.excitation_seq))
             d_frames = np.nonzero(exc == "d")[0]
             a_frames = np.nonzero(exc == "a")[0]
 
