@@ -107,10 +107,13 @@ class Tracker:
         for f in files:
             pth = self.data_dir / f
             if pth.suffix.lower() == ".spe":
-                kwargs = {"check_filesize": False}
+                # Disable warnings about file size being wrong which is caused
+                # by SDT-control not dumping the whole file
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", UserWarning)
+                    ret[f] = pims.open(str(pth))
             else:
-                kwargs = {}
-            ret[f] = pims.open(str(pth), **kwargs)
+                ret[f] = pims.open(str(pth))
         return ret
 
     def donor_sum(self, fr):
