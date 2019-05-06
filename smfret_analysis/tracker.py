@@ -103,8 +103,15 @@ class Tracker:
             return fig.canvas
 
     def _open_image_sequences(self, files):
-        return collections.OrderedDict([(f, pims.open(str(self.data_dir / f)))
-                                        for f in files])
+        ret = collections.OrderedDict()
+        for f in files:
+            pth = self.data_dir / f
+            if pth.suffix.lower() == ".spe":
+                kwargs = {"check_filesize": False}
+            else:
+                kwargs = {}
+            ret[f] = pims.open(str(pth), **kwargs)
+        return ret
 
     def donor_sum(self, fr):
         fr = self.tracker.frame_selector(fr, "d")
