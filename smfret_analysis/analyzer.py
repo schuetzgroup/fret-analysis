@@ -486,11 +486,10 @@ class Analyzer:
 
                 # Apply each cell mask to all frames from the time of its
                 # recording to the recording of the next cell image
-                for start, stop in zip(
-                        all_c_pos, itertools.chain(all_c_pos[1:], [None])):
+                for i, (start, stop) in enumerate(zip(
+                        all_c_pos, itertools.chain(all_c_pos[1:], [None]))):
                     masks.append({"key": f,
-                                  "mask": thresh_algorithm(ci[start],
-                                                           **kwargs),
+                                  "mask": thresh_algorithm(ci[i], **kwargs),
                                   "start": start,
                                   "stop": stop})
             ana.image_mask(masks, channel="donor")
