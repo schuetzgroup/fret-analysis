@@ -1,22 +1,23 @@
+import collections
 import contextlib
 import functools
-import warnings
-import collections
-from pathlib import Path
 import itertools
+import math
+from pathlib import Path
+import warnings
 
-import numpy as np
-from scipy import ndimage
-import pandas as pd
 import ipywidgets
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib import gridspec
+import numpy as np
+import pandas as pd
+from scipy import ndimage
 
 from sdt import io, roi, fret, helper, nbui, image, plot, changepoint
 
-from .version import output_version
 from .tracker import Tracker
+from .version import output_version
 
 
 class Analyzer:
@@ -459,19 +460,40 @@ class Analyzer:
         return self._thresholder
 
     def apply_cell_masks(self, thresh_algorithm="adaptive", **kwargs):
+        if isinstance(thresh_algorithm, str):
+            thresh_algorithm = getattr(image, thresh_algorithm + "_thresh")
+
         for k, v in self.sources.items():
+            if not v["cells"]:
+                continue
+
             ana = self.analyzers[k]
+            files = np.unique(ana.tracks.index.levels[0])
 
-            if isinstance(thresh_algorithm, str):
-                thresh_algorithm = getattr(image, thresh_algorithm + "_thresh")
+            masks = []
+            for f in files:
+                ci = self.cell_images[f]
 
-            if v["cells"]:
-                trc = ana.tracks
+                # Get frame numbers of all cell images
+                c_pos = np.nonzero(self.excitation_seq == "c")[0]
+                n_rep = math.ceil(len(ci) / len(c_pos))
 
-                files = np.unique(trc.index.levels[0])
-                mask = [(f, thresh_algorithm(self.cell_images[f][0], **kwargs))
-                        for f in files]
-                ana.image_mask(mask, channel="donor")
+                all_c_pos = np.empty(n_rep * len(c_pos), dtype=int)
+                for i in range(n_rep):
+                    all_c_pos[i * len(c_pos):(i + 1) * len(c_pos)] = \
+                        i * len(self.excitation_seq) + c_pos
+                all_c_pos = all_c_pos[:len(ci)]
+
+                # Apply each cell mask to all frames from the time of its
+                # recording to the recording of the next cell image
+                for start, stop in zip(
+                        all_c_pos, itertools.chain(all_c_pos[1:], [None])):
+                    masks.append({"key": f,
+                                  "mask": thresh_algorithm(ci[start],
+                                                           **kwargs),
+                                  "start": start,
+                                  "stop": stop})
+            ana.image_mask(masks, channel="donor")
 
     def save(self, file_prefix="filtered"):
         outfile = Path(f"{file_prefix}-v{output_version:03}")
