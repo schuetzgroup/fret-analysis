@@ -25,7 +25,7 @@ class Analyzer:
 
         self.rois = cfg["rois"]
         self.cc = cfg["tracker"].chromatic_corr
-        self.excitation_seq = cfg["excitation_seq"]
+        self.excitation_seq = cfg["tracker"].excitation_seq
         self.analyzers = {k: fret.SmFretAnalyzer(v, self.excitation_seq)
                           for k, v in cfg["track_data"].items()}
         self.data_dir = cfg["data_dir"]
@@ -46,7 +46,8 @@ class Analyzer:
             a.flag_excitation_type()
 
     def present_at_start(self, frame=None):
-        frame = self.excitation_seq.find("d") if frame is None else frame
+        if frame is None:
+            frame = np.nonzero(self.excitation_seq == "d")[0][0]
         for a in self.analyzers.values():
             a.query_particles(f"donor_frame == {frame}")
 
