@@ -277,7 +277,7 @@ class Tracker:
             keys = self.track_data.keys()
 
         if frame is None:
-            frame = self.excitation_seq.find(dest[0])
+            frame = self.tracker.excitation_frames[dest[0]][0]
 
         data = []
         for k in keys:
