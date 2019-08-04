@@ -275,6 +275,8 @@ class Tracker:
             return
         if keys == "all":
             keys = self.track_data.keys()
+        elif keys == "no-cells":
+            keys = [k for k in self.track_data.keys() if self.sources[k]["cells"]]
 
         if frame is None:
             frame = self.tracker.excitation_frames[dest[0]][0]
