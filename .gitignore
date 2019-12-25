@@ -10,6 +10,7 @@ __pycache__
 # Ignore everything in the root dir since there will be data
 /*
 # Whitelist things that should be in git
+!/bulkfret_analysis
 !/notebooks
 !/smfret_analysis
 !/scripts
