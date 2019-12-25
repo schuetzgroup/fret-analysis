@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pims
 
-from sdt import flatfield, fret, io, nbui, roi
+from sdt import flatfield, fret, image, io, nbui, roi
 
 
 class Draap:
@@ -50,8 +50,8 @@ class Draap:
         bg = []
         for f in files:
             with pims.open(str(self.data_dir / f)) as img:
-                img = self.channel_roi(self.exc_img_filter(img, "d"))
-                bg.append(img[fr_don[0]])
+                img_don = self.channel_roi(self.exc_img_filter(img, "d"))
+                bg.append(img_don[0])
         self.background = np.mean(bg, axis=0)
 
     def beam_shape_from_files(self, files_re, frame=0, **kwargs):
