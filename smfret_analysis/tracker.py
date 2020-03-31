@@ -231,6 +231,13 @@ class Tracker:
                 except Exception as e:
                     warnings.warn(f"Tracking failed for {f}. Reason: {e}")
 
+                    fake_fret_df = pd.DataFrame(
+                        columns=["particle", "interp", "has_neighbor"],
+                        dtype=int)
+                    d = pd.concat([don_loc.iloc[:0], acc_loc.iloc[:0],
+                                   fake_fret_df],
+                                  keys=["donor", "acceptor", "fret"], axis=1)
+
                 ps = d["fret", "particle"].copy().values
                 for p in np.unique(ps):
                     d.loc[ps == p, ("fret", "particle")] = new_p
