@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2020 Lukas Schrangl <lukas.schrangl@tuwien.ac.at>
+
+SPDX-License-Identifier: CC-BY-4.0
+-->
+
 # Single molecule FRET analysis
 
 This repository contains a Python package and several Jupyter notebooks to
