@@ -6,6 +6,7 @@ analyze single molecule FRET data.
 
 ## Suggested workflow:
 
+- Clone repository
 - Copy Jupyter notebooks from the `notebooks` folder to the root (this) folder.
 - Copy your data into the `data` folder.
 - Open `01. Tracking` notebook. Run each cell and adjust file paths and
@@ -18,10 +19,12 @@ analyze single molecule FRET data.
 ## Requirements
 
 - Python >= 3.6
-- sdt-python >= 13.0
+- Jupyter Notebook or Lab
+- sdt-python >= 14.0
 - numpy
 - scipy
 - pandas
 - matplotlib
 - pims
-- bokeh >= 0.12.5
+- ipympl
+- OpenCV
