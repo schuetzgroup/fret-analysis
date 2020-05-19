@@ -27,30 +27,103 @@ from .version import output_version
 
 
 @helper.pipeline(ancestor_count=2)
-def _img_sum(d, a):
+def _img_sum(a, b):
+    """:py:func:`helper.pipeline` sum of two images
+
+    Parameters
+    ----------
+    a, b : helper.Slicerator or numpy.ndarray
+        Image data
+
+    Returns
+    -------
+    helper.Slicerator or numpy.ndarray
+        Sum image
+    """
     return d + a
 
 
 class Tracker:
+    """Jupyter notebook UI for single molecule FRET tracking
+
+    This allows for image registration, single molecule localization,
+    tracking, and brightness determination. These are the most time-consuming
+    tasks and are thus isolated from the rest of the analysis. Additionally,
+    these tasks are the only ones that require access to raw image data, which
+    can take up large amounts of disk space and are thus often located on
+    external storage. After running the methods of this class, this storage
+    can be disconnected and further filtering and analysis can be efficiently
+    performed using the :py:class:`Analyzer` class.
+    """
     def __init__(self, don_o, acc_o, roi_size, excitation_seq="da",
                  data_dir=""):
+        """Parameters
+        ----------
+        don_o : tuple of int
+            Origin (top left corner) of the donor channel ROI
+        acc_o : tuple of int
+            Origin (top left corner) of the acceptor channel ROI
+        roi_size : tuple of int
+            Width and height of the ROIs
+        excitation_seq : str, optional
+            Excitation sequence. Use "d" for excitation, "a" for acceptor
+            excitation, and "c" for a image of the cell.
+            The given sequence is repeated as necessary. E.g., "da" is
+            equivalent to "dadadadada"... Defaults to "da".
+        data_dir : pathlib.Path or str, optional
+            Data directory path. All data paths (e.g. in
+            :py:meth:`add_dataset`) are take relative to this. Defaults to "",
+            which is the current working directory.
+        """
         self.rois = dict(
             donor=roi.ROI(don_o, size=roi_size),
             acceptor=roi.ROI(acc_o, size=roi_size))
+        """dict of channel name -> :py:class:`roi.ROI` instances. Contains
+        "donor" and "acceptor" keys.
+        """
         self.tracker = SmFretTracker(excitation_seq)
+        """:py:class:`SmFretTracker` instance used for tracking"""
         self.sources = collections.OrderedDict()
+        """dict of dataset name (see :py:meth:`add_dataset`) -> information
+        about source (image) files.
+        """
 
         self.loc_data = collections.OrderedDict()
+        """dict of dataset name -> single molecule localization data."""
         self.track_data = collections.OrderedDict()
+        """dict of dataset name -> single molecule tracking data."""
         self.cell_images = collections.OrderedDict()
+        """dict of dataset name -> cell images ("c" in excitation sequence)."""
         self.flatfield = collections.OrderedDict()
+        """dict of channel name -> :py:class:`flatfield.Corrector` instances.
+        """
         self.data_dir = Path(data_dir)
+        """data directory root path"""
 
         self.locators = collections.OrderedDict([
             ("donor", Locator()), ("acceptor", Locator()),
             ("beads", Locator())])
+        """:py:class:`nbui.Locator` instances for locating "beads", "donor"
+        emission data, "acceptor" emission data.
+        """
 
     def _make_dataset_selector(self, state, callback):
+        """Create a drop-down for selecting the dataset in UIs
+
+        Parameters
+        ----------
+        state : dict
+            Keep some state of the widget. This creates/overwrites "tr",
+            "pnos", and "files" entries containing the dataset's tracking data,
+            unique particle numbers, and source files, respectively.
+        callback : callable
+            Gets called whenever the dataset was changed.
+
+        Returns
+        -------
+        ipywidgets.Dropdown
+            The selection UI element
+        """
         d_sel = ipywidgets.Dropdown(options=list(self.track_data.keys()),
                                     description="dataset")
 
@@ -68,6 +141,24 @@ class Tracker:
         return d_sel
 
     def add_dataset(self, key, files_re, cells=False):
+        """Add a dataset
+
+        A typical experiment consists of several datasets (e.g., the actual
+        sample plus controls). This method should be called for each of them
+        to add it :py:attr:`sources`.
+
+        Parameters
+        ----------
+        key : str
+            Name of the dataset
+        files_re : str
+            Regular expression describing image file names relative to
+            :py:attr:`data_dir`. Use forward slashes as path separators.
+        cells : bool, optional
+            If True, this is a sample with cells. Any frames corresponding to
+            "c" in the excitation sequence will be extracted by
+            :py:meth:`extract_cell_images`.
+        """
         files = io.get_files(files_re, self.data_dir)[0]
         if not files:
             warnings.warn(f"Empty dataset added: {key}")
@@ -76,6 +167,22 @@ class Tracker:
         self.sources[key] = s
 
     def set_bead_loc_opts(self, files_re):
+        """Display a widget to set options for localization of beads
+
+        for image registration. After finishing, call :py:meth:`make_chromatic`
+        to create a :py:class:`chromatic.Corrector` object.
+
+        Parameters
+        ----------
+        files_re : str
+            Regular expression describing image file names relative to
+            :py:attr:`data_dir`. Use forward slashes as path separators.
+
+        Returns
+        -------
+        :py:class:`nbui.Locator`
+            Widget
+        """
         files = io.get_files(files_re, self.data_dir)[0]
         self.locators["beads"].files = \
             {f: pims.open(str(self.data_dir / f)) for f in files}
@@ -83,6 +190,29 @@ class Tracker:
         return self.locators["beads"]
 
     def make_chromatic(self, plot=True, max_frame=None, params={}):
+        """Calculate transformation between color channels
+
+        Localize beads using the options set with :py:meth:`set_bead_loc_opts`,
+        find pairs and fit transformation. Store result in
+        :py:attr:`self.tracker.chromatic_corr`.
+
+        Parameters
+        ----------
+        plot : bool, optional
+            If True, plot the fit results and return the figure canvas
+        max_frame : int or None, optional
+            Maximum frame number to consider. Useful if beads defocused in
+            later frames. Defaults to None: use all frames.
+        params : dict, optional
+            Passed to :py:meth:`chromatic.Corrector.determine_parameters.
+            Defaults to ``{}``.
+
+        Returns
+        -------
+        figure widget or None
+            If ``plot=True``, return the figure canvas which can be displayed
+            in Jupyter notebooks.
+        """
         label = ipywidgets.Label(value="Starting…")
         display(label)
 
@@ -107,6 +237,18 @@ class Tracker:
             return fig.canvas
 
     def _open_image_sequences(self, files):
+        """Use :py:func:`pims.open` to open image sequences
+
+        Parameters
+        ----------
+        files : iterable of str or iterable of pathlib.Path
+            Files to open
+
+        Returns
+        -------
+        collections.OrderedDict
+            Maps file name -> pims FrameSequence
+        """
         ret = collections.OrderedDict()
         for f in files:
             pth = self.data_dir / f
@@ -121,6 +263,20 @@ class Tracker:
         return ret
 
     def donor_sum(self, fr):
+        """Get sum image (sequence) of both channels upon donor excitation
+
+        Transform donor channel image(s) and add acceptor channel image(s).
+
+        Parameters
+        ----------
+        fr : helper.Slicerator or numpy.ndarray
+            Image (sequence)
+
+        Returns
+        -------
+        helper.Slicerator or numpy.ndarray
+            Sum of transformed donor image(s) and acceptor image(s)
+        """
         fr = self.tracker.frame_selector(fr, "d")
         fr_d = self.tracker.chromatic_corr(self.rois["donor"](fr), channel=1,
                                            cval=np.mean)
@@ -128,6 +284,20 @@ class Tracker:
         return _img_sum(fr_d, fr_a)
 
     def set_loc_opts(self, exc_type):
+        """Return a widget for setting localization options
+
+        Parameters
+        ----------
+        exc_type : {"donor", "acceptor"}
+            Whether to set the localization options for the sum of donor
+            and acceptor emission upon donor excitation ("donor") or
+            for acceptor emission upon acceptor excitation ("acceptor").
+
+        Returns
+        -------
+        ipywidgets.Widget
+            Interactive selection of localization options with visual feedback
+        """
         d_sel = ipywidgets.Dropdown(
             options=list(self.sources.keys()), description="dataset")
 
@@ -156,6 +326,15 @@ class Tracker:
         return ipywidgets.VBox([d_sel, loc])
 
     def locate(self):
+        """Locate single-molecule signals
+
+        For this, use the settings selected with help of the widgets
+        returned by :py:meth:`set_loc_opts` for donor and acceptor excitation
+        or loaded with :py:meth:`load`.
+
+        Localization data for each dataset is collected in the
+        :py:attr:`loc_data` dictionary.
+        """
         num_files = sum(len(s["files"]) for s in self.sources.values())
         cnt = 1
         label = ipywidgets.Label(value="Starting…")
@@ -190,6 +369,46 @@ class Tracker:
               min_length=4, bg_estimator="mean",
               image_filter=lambda i: image.gaussian_filter(i, 1),
               neighbor_radius=None):
+        """Link single-molecule localizations into trajectories
+
+        and measure signal intensities.
+        This is to be called after :py:meth:`locate`. Results are collected in
+        the :py:attr:`track_data` dictionary.
+
+        Parameters
+        ----------
+        feat_radius : int, optional
+            For intensity measurement, sum all pixel values in a circle with
+            this radius around each signal's position; see
+            :py:func:`sdt.brightness.from_raw_image`. Defaults to 4.
+        bg_frame : int, optional
+            Determine local background from pixels in a ring of this width
+            around each signal circle; see
+            :py:func:`sdt.brightness.from_raw_image`. Defaults to 3.
+        link_radius : float, optional
+            Maximum distance a particle is expected to move between frames.
+            See :py:func:`trackpy.link`. Defaults to 1.
+        link_mem : int, optional
+            Maximum number of consecutive frames a particle is can be missed.
+            See :py:func:`trackpy.link`. It is recommended to set this >= 1
+            as this allows for tracking particles even if one of the
+            FRET pair fluorophores is bleached. Defaults to 1.
+        min_length : int, optional
+            Remove any tracks with fewer localizations. Defaults to 4.
+        bg_estimator : {"mean", "median"} or numpy.ufunc
+            How to determine the background from the pixels in the background
+            ring; see :py:func:`sdt.brightness.from_raw_image`. Defaults to
+            "mean".
+        image_filter : helper.Pipeline or None, optional
+            Apply this filter before intensity determination. Defaults to
+            ``lambda i: sdt.image.gaussian_filter(i, 1)``, i.e., a slight
+            Gaussian blur which has been found to decrease noise in low-SNR
+            scenarios while hardly affecting the intensity.
+        neighbor_radius : float or None, optional
+            Any particles that are closer than ``neighbor_radius`` are
+            considered overlapping and may be filtered later. If `None`,
+            use ``2 * feat_radius + 1``. Defaults to `None`.
+        """
         num_files = sum(len(s["files"]) for s in self.sources.values())
         cnt = 1
         label = ipywidgets.Label(value="Starting…")
@@ -252,6 +471,20 @@ class Tracker:
             self.track_data[key] = pd.concat(ret, keys=ret_keys)
 
     def extract_cell_images(self, key="c"):
+        """Get cell images for thresholding
+
+        This extracts the images of cell contours for use with
+        :py:class:`Analyzer`. Images are copied to :py:attr:`cell_images`.
+        This is only applied to datasets where ``cells=True`` was set when
+        adding them using :py:meth:`add_dataset`.
+
+        Parameters
+        ----------
+        key : str, optional
+            Character describing cell images in the excitation sequence
+            ``excitation_seq`` parameter to :py:meth:`__init__`. Defaults to
+            "c".
+        """
         for k, v in self.sources.items():
             if not v["cells"]:
                 # no cells
@@ -263,6 +496,37 @@ class Tracker:
 
     def make_flatfield(self, dest, files_re, src=None, frame=0, bg=200,
                        smooth_sigma=3., gaussian_fit=False):
+        """Calculate flatfield correction from separate bulk images
+
+        If images the excitation laser profile were recorded using
+        homogeneously labeled surfaces, this method can be used to calculate
+        the flatfield corrections for donor and acceptor excitation.
+        Results are saved to :py:attr:`flatfield`.
+
+        Parameters
+        ----------
+        dest : {"donor", "acceptor"}
+            Whether to calculate the flatfield correction for the donor or
+            acceptor excitation.
+        files_re : str
+            Regular expression describing image file names relative to
+            :py:attr:`data_dir`. Use forward slashes as path separators.
+        src : {"donor", "acceptor"} or None, optional
+            Whether to use the donor or acceptor emission channel. If `None`,
+            use the same as `dest`. Defaults to `None`.
+        frame : int, optional
+            Which frame in the image sequences described by `files_re` to use.
+            Defaults to `None`.
+        bg : int or numpy.ndarray, optional
+            Camera background. Either a value or an image data array.
+            Defaults to 200.
+        smooth_sigma : float, optional
+            Sigma for Gaussian blur to smoothe images. Defaults to 3.
+        gaussian_fit : bool, optional
+            If `True`, perform a Gaussian fit to the excitation profiles.
+            Otherwise, use the mean of the `frame`-th images from the files
+            described by `files_re`. Defaults to `False`.
+        """
         files = io.get_files(files_re, self.data_dir)[0]
         imgs = []
         if src is None:
@@ -282,12 +546,38 @@ class Tracker:
             imgs, smooth_sigma=smooth_sigma, gaussian_fit=gaussian_fit)
 
     def make_flatfield_sm(self, dest, keys="all", weighted=False, frame=None):
+        """Calculate flatfield correction from single-molecule data
+
+        If images the excitation laser profile were NOT recorded using
+        homogeneously labeled surfaces, this method can be used to calculate
+        the flatfield corrections for donor and acceptor excitation from
+        single-molecule data. To this end, a 2D Gaussian is fit to the
+        single-molecule intensities. Results are saved to :py:attr:`flatfield`.
+
+        Parameters
+        ----------
+        dest : {"donor", "acceptor"}
+            Whether to calculate the flatfield correction for the donor or
+            acceptor excitation.
+        keys : list of str or "all" or "no-cells", optional
+            Names of datasets to use for calculation. "all" will use all
+            datasets. "no-cells" will use only datasets where ``cells=False``
+            was set when adding them via :py:meth:`add_dataset`. Defaults to
+            "all".
+        weighted : bool, optional
+            Weigh data inversely to density when performing a Gaussian fit.
+            Not very robust, thus the default is `False`.
+        frame : int or None, optional
+            Select only data from this frame. If `None`, use the first frame
+            corresponding to `dest`. Defaults to `None`.
+        """
         if not len(keys):
             return
         if keys == "all":
             keys = self.track_data.keys()
         elif keys == "no-cells":
-            keys = [k for k in self.track_data.keys() if self.sources[k]["cells"]]
+            keys = [k for k in self.track_data.keys()
+                    if self.sources[k]["cells"]]
 
         if frame is None:
             frame = self.tracker.excitation_frames[dest[0]][0]
@@ -314,6 +604,19 @@ class Tracker:
                                                     density_weight=weighted)
 
     def save(self, file_prefix="tracking"):
+        f"""Save results to disk
+
+        This will save localization settings and data, tracking data, channel
+        overlay transforms, cell images, and flatfield corrections to disk.
+
+        Parameters
+        ----------
+        file_prefix : str, optional
+            Common prefix for all files written by this method. It will be
+            suffixed by the output format version (v{file_version:03}) and
+            file extensions corresponding to what is saved in each file.
+            Defaults to "tracking".
+        """
         loc_options = collections.OrderedDict(
             [(k, v.get_settings()) for k, v in self.locators.items()])
 
@@ -348,6 +651,29 @@ class Tracker:
     @staticmethod
     def load_data(file_prefix="tracking", loc=True, tracks=True,
                   cell_images=True, flatfield=True, images=True):
+        """Load data to a dictionary
+
+        Parameters
+        ----------
+        file_prefix : str, optional
+            Prefix used for saving via :py:meth:`save`. Defaults to "tracking".
+        loc : bool, optional
+            Whether to load localization data. Defaults to `True`.
+        tracks : bool, optional
+            Whether to load tracking data. Defaults to `True`.
+        cell_images : bool, optional
+            Whether to load cell images. Defaults to `True`.
+        flatfield : bool, optional
+            Whether to load flatfield corrections. Defaults to `True`.
+        images : bool, optional
+            Whether to open raw images files. If they reside on external
+            media, they need to be accessible. Defaults to `True`.
+
+        Returns
+        -------
+        dict
+            Dictionary of loaded data and settings.
+        """
         infile = Path(f"{file_prefix}-v{output_version:03}")
         with infile.with_suffix(".yaml").open() as f:
             cfg = io.yaml.safe_load(f)
@@ -396,9 +722,30 @@ class Tracker:
 
     @classmethod
     def load(cls, file_prefix="tracking", loc=True, tracks=True,
-             cell_images=True, profile_images=True):
-        cfg = cls.load_data(file_prefix, loc, tracks, cell_images,
-                            profile_images)
+             cell_images=True, flatfield=True):
+        """Construct class instance from saved data
+
+        Raw data needs to be accessible for this.
+
+        Parameters
+        ----------
+        file_prefix : str, optional
+            Prefix used for saving via :py:meth:`save`. Defaults to "tracking".
+        loc : bool, optional
+            Whether to load localization data. Defaults to `True`.
+        tracks : bool, optional
+            Whether to load tracking data. Defaults to `True`.
+        cell_images : bool, optional
+            Whether to load cell images. Defaults to `True`.
+        flatfield : bool, optional
+            Whether to load flatfield corrections. Defaults to `True`.
+
+        Returns
+        -------
+        Class instance
+            Attributes reflect saved settings and data.
+        """
+        cfg = cls.load_data(file_prefix, loc, tracks, cell_images, flatfield)
 
         ret = cls([0, 0], [0, 0], [0, 0], "")
 
