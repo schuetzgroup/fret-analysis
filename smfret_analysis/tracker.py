@@ -5,8 +5,15 @@
 import re
 import collections
 from pathlib import Path
-from typing import (Any, Dict, Iterable, Literal, Optional, Sequence, Tuple,
-                    Union)
+from typing import (Any, Dict, Iterable, Optional, Sequence, Tuple, Union)
+try:
+    from typing import Literal
+except ImportError:
+    # Hack for Python < 3.8
+    # Is there a better solution?
+    class Literal:
+        def __class_getitem__(cls, item):
+            return str(list(item))
 import warnings
 
 from IPython.display import display
