@@ -103,39 +103,6 @@ class Tracker:
         emission data, "acceptor" emission data.
         """
 
-    def _make_dataset_selector(self, state, callback):
-        """Create a drop-down for selecting the dataset in UIs
-
-        Parameters
-        ----------
-        state : dict
-            Keep some state of the widget. This creates/overwrites "tr",
-            "pnos", and "files" entries containing the dataset's tracking data,
-            unique particle numbers, and source files, respectively.
-        callback : callable
-            Gets called whenever the dataset was changed.
-
-        Returns
-        -------
-        ipywidgets.Dropdown
-            The selection UI element
-        """
-        d_sel = ipywidgets.Dropdown(options=list(self.track_data.keys()),
-                                    description="dataset")
-
-        def change_dataset(key=None):
-            tr = self.track_data[d_sel.value]
-            state["tr"] = tr
-            state["pnos"] = sorted(tr["fret", "particle"].unique())
-            state["files"] = tr.index.remove_unused_levels().levels[0].unique()
-
-            callback()
-
-        d_sel.observe(change_dataset, names="value")
-        change_dataset()
-
-        return d_sel
-
     def add_dataset(self, key, files_re, cells=False):
         """Add a dataset
 
