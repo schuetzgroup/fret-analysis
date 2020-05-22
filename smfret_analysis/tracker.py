@@ -3,24 +3,20 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 import re
-import os
-import tempfile
-import subprocess
 import collections
-from contextlib import suppress
 from pathlib import Path
 import warnings
 
 import pandas as pd
 import numpy as np
+from IPython.display import display
 import ipywidgets
 import pims
 import matplotlib.pyplot as plt
 
-from sdt import roi, chromatic, io, image, fret, changepoint, helper
+from sdt import roi, chromatic, io, image, helper
 from sdt import flatfield as _flatfield  # avoid name clashes
-from sdt.fret import SmFretTracker, FrameSelector
-from sdt.loc import daostorm_3d
+from sdt.fret import SmFretTracker
 from sdt.nbui import Locator
 
 from .version import output_version
@@ -40,7 +36,7 @@ def _img_sum(a, b):
     helper.Slicerator or numpy.ndarray
         Sum image
     """
-    return d + a
+    return a + b
 
 
 class Tracker:
@@ -189,7 +185,7 @@ class Tracker:
         self.locators["beads"].auto_scale()
         return self.locators["beads"]
 
-    def make_chromatic(self, plot=True, max_frame=None, params={}):
+    def make_chromatic(self, plot=True, max_frame=None, params=None):
         """Calculate transformation between color channels
 
         Localize beads using the options set with :py:meth:`set_bead_loc_opts`,
@@ -203,9 +199,9 @@ class Tracker:
         max_frame : int or None, optional
             Maximum frame number to consider. Useful if beads defocused in
             later frames. Defaults to None: use all frames.
-        params : dict, optional
+        params : dict or None, optional
             Passed to :py:meth:`chromatic.Corrector.determine_parameters.
-            Defaults to ``{}``.
+            Defaults to `None`.
 
         Returns
         -------
@@ -228,7 +224,7 @@ class Tracker:
         acc_beads = [self.rois["acceptor"](l) for l in bead_loc]
         don_beads = [self.rois["donor"](l) for l in bead_loc]
         cc = chromatic.Corrector(don_beads, acc_beads)
-        cc.determine_parameters(**params)
+        cc.determine_parameters(**params or {})
         self.tracker.chromatic_corr = cc
 
         if plot:
@@ -604,7 +600,7 @@ class Tracker:
                                                     density_weight=weighted)
 
     def save(self, file_prefix="tracking"):
-        f"""Save results to disk
+        """Save results to disk
 
         This will save localization settings and data, tracking data, channel
         overlay transforms, cell images, and flatfield corrections to disk.
@@ -613,7 +609,7 @@ class Tracker:
         ----------
         file_prefix : str, optional
             Common prefix for all files written by this method. It will be
-            suffixed by the output format version (v{file_version:03}) and
+            suffixed by the output format version (v{output_version}) and
             file extensions corresponding to what is saved in each file.
             Defaults to "tracking".
         """
