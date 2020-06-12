@@ -2,10 +2,12 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+"""Provide :py:class:`Tracker` as a Jupyter notebook UI for smFRET tracking"""
 import re
 import collections
 from pathlib import Path
-from typing import (Any, Dict, Iterable, Optional, Sequence, Tuple, Union)
+from typing import (Any, Callable, Dict, Iterable, Optional, Sequence, Tuple,
+                    Union)
 try:
     from typing import Literal
 except ImportError:
@@ -336,7 +338,8 @@ class Tracker:
 
     def track(self, feat_radius: int = 4, bg_frame: int = 3,
               link_radius: float = 1.0, link_mem: int = 1, min_length: int = 4,
-              bg_estimator: Union[Literal["mean", "median"], np.ufunc] = "mean",
+              bg_estimator: Union[Literal["mean", "median"],
+                                  Callable[[np.array], float]] = "mean",
               image_filter: Optional[helper.Pipeline] =
                   lambda i: image.gaussian_filter(i, 1),
               neighbor_radius: Optional[float] = None):
