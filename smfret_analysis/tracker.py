@@ -12,7 +12,7 @@ try:
     from typing import Literal
 except ImportError:
     # Python < 3.8
-    from typing_extensions import Literal
+    from .typing_extensions import Literal
 import warnings
 
 from IPython.display import display
