@@ -26,7 +26,7 @@ analyze single molecule FRET data.
 
 - Python >= 3.6
 - Jupyter Notebook or Lab
-- sdt-python >= 14.0
+- sdt-python >= 14.4
 - numpy
 - scipy
 - pandas

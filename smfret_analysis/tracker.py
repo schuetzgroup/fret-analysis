@@ -112,7 +112,9 @@ class Tracker:
         emission data, "acceptor" emission data.
         """
 
-    def add_dataset(self, key: str, files_re: str, cells: bool = False):
+    def add_dataset(self, key: str, files_re: str,
+                    special: Literal["none", "cells", "don-only",
+                                     "acc-only"] = "none"):
         """Add a dataset
 
         A typical experiment consists of several datasets (e.g., the actual
@@ -126,16 +128,19 @@ class Tracker:
         files_re
             Regular expression describing image file names relative to
             :py:attr:`data_dir`. Use forward slashes as path separators.
-        cells
-            If True, this is a sample with cells. Any frames corresponding to
-            "c" in the excitation sequence will be extracted by
-            :py:meth:`extract_cell_images`.
+        special
+            "cells" means that this sample contains images of cells, which will
+            be extracted usinge :py:meth:`extract_cell_images`. "don-only"
+            and "acc-only" mark a samples missing acceptor or donor
+            fluorophores, respectively. These receive special treatment for
+            calculating correction factors in :py:class:`Analyzer`. If none of
+            this applies, set to "none" (the default).
         """
         files = io.get_files(files_re, self.data_dir)[0]
         if not files:
             warnings.warn(f"Empty dataset added: {key}")
         s = collections.OrderedDict(
-            [("files", self._open_image_sequences(files)), ("cells", cells)])
+            [("files", self._open_image_sequences(files)), ("special", special)])
         self.sources[key] = s
 
     def set_bead_loc_opts(self, files_re: str) -> Locator:
@@ -449,7 +454,7 @@ class Tracker:
 
         This extracts the images of cell contours for use with
         :py:class:`Analyzer`. Images are copied to :py:attr:`cell_images`.
-        This is only applied to datasets where ``cells=True`` was set when
+        This is only applied to datasets where ``special="cells"`` was set when
         adding them using :py:meth:`add_dataset`.
 
         Parameters
@@ -460,7 +465,7 @@ class Tracker:
             "c".
         """
         for k, v in self.sources.items():
-            if not v["cells"]:
+            if not v["special"].startswith("c"):
                 # no cells
                 continue
             for f, fr in v["files"].items():
@@ -523,7 +528,7 @@ class Tracker:
 
     def make_flatfield_sm(self, dest: Literal["donor", "acceptor"],
                           keys: Union[Sequence[str],
-                                      Literal["all", "no-cells"]] = "all",
+                                      Literal["all", "no-special"]] = "all",
                           weighted: bool = False, frame: Optional[int] = None):
         """Calculate flatfield correction from single-molecule data
 
@@ -540,9 +545,9 @@ class Tracker:
             acceptor excitation.
         keys
             Names of datasets to use for calculation. "all" will use all
-            datasets. "no-cells" will use only datasets where ``cells=False``
-            was set when adding them via :py:meth:`add_dataset`. Defaults to
-            "all".
+            datasets. "no-special" will use only datasets where
+            ``special=none`` was set when adding them via
+            :py:meth:`add_dataset`. Defaults to "all".
         weighted
             Weigh data inversely to density when performing a Gaussian fit.
             Not very robust, thus the default is `False`.
@@ -554,9 +559,9 @@ class Tracker:
             return
         if keys == "all":
             keys = self.track_data.keys()
-        elif keys == "no-cells":
+        elif keys == "no-special":
             keys = [k for k in self.track_data.keys()
-                    if self.sources[k]["cells"]]
+                    if self.sources[k]["special"].startswith("s")]
 
         if frame is None:
             frame = self.tracker.excitation_frames[dest[0]][0]

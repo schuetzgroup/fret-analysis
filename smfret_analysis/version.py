@@ -8,7 +8,7 @@ import sdt
 
 
 __version__ = "2.1"
-output_version = 11
+output_version = 12
 
 
 def print_info():
