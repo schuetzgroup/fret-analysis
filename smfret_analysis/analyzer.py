@@ -86,7 +86,7 @@ class Analyzer:
     def present_at_start(self, frame: Optional[int] = None,
                          special: Optional[Sequence["str"]] = None):
         """Remove tracks that are not present in the beginning
-        
+
         Parameters
         ----------
         frame
@@ -104,7 +104,7 @@ class Analyzer:
             frame_a = frame_a[0] if frame_a.size else -1
         else:
             frame_d = frame_a = frame
-            
+
         for k, v in self.sources.items():
             if special is not None and v["special"] not in special:
                 continue
@@ -113,12 +113,12 @@ class Analyzer:
                 f = frame_a
             else:
                 f = frame_d
-                
+
             self.analyzers[k].query_particles(f"donor_frame == {f}")
 
     def find_beam_shape_thresh(self) -> ipywidgets.Widget:
         """Display a widget to set the laser intensity threshold
-        
+
         Use :py:meth:`filter_beam_shape_region` to select only datapoints
         within the region of bright laser excitation.
         """
@@ -163,7 +163,7 @@ class Analyzer:
     def filter_beam_shape_region(self, channel: Literal["donor", "accetpor"],
                                  thresh: float):
         """Select only datapoints within the region of bright laser excitation
-        
+
         Parameters
         ----------
         channel
@@ -177,7 +177,7 @@ class Analyzer:
 
     def flatfield_correction(self):
         """Apply flatfield correction to brightness data
-        
+
         See also
         --------
         fret.SmFretAnalyzer.flatfield_correction
@@ -188,13 +188,13 @@ class Analyzer:
 
     def calc_fret_values(self, *args, **kwargs):
         """Calculate FRET-related quantities
-        
+
         Compute apparent FRET efficiencies and stoichiometries,
         the total brightness (mass) upon donor excitation, and the acceptor
         brightness (mass) upon direct excitation, which is interpolated for
         donor excitation datapoints in order to allow for calculation of
         stoichiometries.
-        
+
         See also
         --------
         fret.SmFretAnalyzer.calc_fret_values
@@ -240,7 +240,7 @@ class Analyzer:
 
     def find_segment_options(self) -> ipywidgets.Widget:
         """Find options for :py:meth:`segment_mass`
-        
+
         Returns
         -------
         The selection UI element
@@ -315,9 +315,9 @@ class Analyzer:
 
     def segment_mass(self, channel: Literal["donor", "acceptor"], **kwargs):
         """Segment tracks by changepoint detection in brightness time traces
-        
+
         This adds a column with segment numbers for each track.
-        
+
         Parameters
         ----------
         channel
@@ -326,7 +326,7 @@ class Analyzer:
         **kwargs
             Arguments passed to the changepoint detection algorithm
             (:py:meth:`sdt.changepoint.Pelt.find_changepoints`).
-            
+
         See also
         --------
         fret.SmFretAnalyzer.segment_mass
@@ -336,33 +336,35 @@ class Analyzer:
 
     def filter_bleach_step(self, donor_thresh: float, acceptor_thresh: float):
         """Remove tracks that do not show expected bleaching steps
-        
+
         Acceptor must bleach in a single step, while donor must not show more
         than one step.
-        
+
         Parameters
         ----------
         donor_thresh, acceptor_thresh
-            Consider the donor / acceptor bleached if the segment median is 
+            Consider the donor / acceptor bleached if the segment median is
             below donor_thresh/acceptor_thresh.
-        
+
         See also
         --------
         fret.SmFretAnalyzer.bleach_step
         """
         for k, v in self.sources.items():
+            if v["special"].startswith("d") or v["special"].startswith("a"):
+                # Don't filter donor-only and acceptor-only samples
+                continue
             a = self.analyzers[k]
-            a.bleach_step(donor_thresh, acceptor_thresh, truncate=False,
-                          special=v["special"])
+            a.bleach_step(donor_thresh, acceptor_thresh, truncate=False)
 
     def set_leakage(self, leakage: float):
         r"""Set the leakage correction factor for all datasets
-        
+
         Parameters
         ----------
         leakage
             Leakage correction factor (often denoted :math:`\alpha`)
-        
+
         See also
         --------
         fret.SmFretAnalyzer.leakage
@@ -372,16 +374,16 @@ class Analyzer:
 
     def calc_leakage(self, remove: bool = True):
         """Calculate leakage correction factor from donor-only sample
-        
+
         This uses the first (probably only) dataset with ``special=don-only``
         set when calling :py:meth:`add_dataset`.
-        
+
         Parameters
         ----------
         remove
             Remove donor-only dataset afterwards since it is probably not
             of further interest.
-            
+
         See also
         --------
         calc_leakage_from_bleached
@@ -400,17 +402,17 @@ class Analyzer:
             self, datasets: Union[str, Sequence[str], None] = None,
             print_summary: bool = False):
         """Calculate leakage correction factor from bleached acceptor traces
-        
-        This takes those parts of traces where the acceptor is bleached, but 
+
+        This takes those parts of traces where the acceptor is bleached, but
         the donor isn't.
-        
+
         Parameters
         ----------
         datasets
             dataset(s) to use. If `None`, use all.
         print_summary
             Print number of datapoints and result.
-            
+
         See also
         --------
         calc_leakage
@@ -444,12 +446,12 @@ class Analyzer:
 
     def set_direct_excitation(self, dir_exc: float):
         r"""Set the direct (cross-) excitation factor for all datasets
-        
+
         Parameters
         ----------
         dir_exc
             Direct excitation correction factor (often denoted :math:`\delta`)
-        
+
         See also
         --------
         fret.SmFretAnalyzer.direct_excitation
@@ -459,16 +461,16 @@ class Analyzer:
 
     def calc_direct_excitation(self, remove: bool = True):
         """Calculate direct excitation correction factor from acc-only sample
-        
+
         This uses the first (probably only) dataset with ``special=acc-only``
         set when calling :py:meth:`add_dataset`.
-        
+
         Parameters
         ----------
         remove
             Remove donor-only dataset afterwards since it is probably not
             of further interest.
-            
+
         See also
         --------
         calc_direct_excitation_from_bleached
@@ -487,17 +489,17 @@ class Analyzer:
             self, datasets: Union[str, Sequence[str], None] = None,
             print_summary: bool = False):
         """Calculate dir. exc. correction factor from bleached donor traces
-        
-        This takes those parts of traces where the donor is bleached, but 
+
+        This takes those parts of traces where the donor is bleached, but
         the acceptor isn't.
-        
+
         Parameters
         ----------
         datasets
             dataset(s) to use. If `None`, use all.
         print_summary
             Print number of datapoints and result.
-            
+
         See also
         --------
         calc_direct_excitation
@@ -531,13 +533,13 @@ class Analyzer:
 
     def set_detection_eff(self, eff: float):
         r"""Set the detection efficiency factor for all datasets
-        
+
         Parameters
         ----------
         eff
             Detection efficiency correction factor (often denoted
             :math:`\gamma`)
-        
+
         See also
         --------
         sdt.fret.SmFretAnalyzer.detection_eff
@@ -551,11 +553,11 @@ class Analyzer:
                            aggregate: Literal["dataset", "all"] = "dataset",
                            dataset: Optional[str] = None):
         """Calculate detection efficieny correction factor
-        
+
         The detection efficiency ratio is the ratio of decrease in acceptor
         brightness to the increase in donor brightness upon acceptor
         photobleaching.
-        
+
         Parameters
         ----------
         min_part_len
@@ -574,12 +576,12 @@ class Analyzer:
         aggregate
             Whether to use a callable `how` argument to calculate the
             correction for each dataset individually or a single factor for all
-            datasets. Ignored if `how` is not callable or `dataset` is not 
+            datasets. Ignored if `how` is not callable or `dataset` is not
             `None`.
         dataset
             If `how` is callable, use the given dataset to compute a global
             correction factor for all datasets.
-            
+
         See also
         --------
         sdt.fret.SmFretAnalyzer.calc_detection_eff
@@ -610,13 +612,13 @@ class Analyzer:
 
     def set_excitation_eff(self, eff: float):
         r"""Set the excitation efficiency factor for all datasets
-        
+
         Parameters
         ----------
         eff
             Excitation efficiency correction factor (often denoted
             :math:`\beta`)
-        
+
         See also
         --------
         sdt.fret.SmFretAnalyzer.excitation_eff
@@ -626,16 +628,16 @@ class Analyzer:
 
     def find_excitation_eff_component(self) -> ipywidgets.Widget:
         """Interactively select component for calculation of excitation eff.
-        
+
         The excitation efficiency factor is computer from data with known 1:1
         stoichiomtry. This displays datasets and allows for fitting Gaussian
         mixture models to select the right component in an E–S plot. Parameters
         can be passed to :py:meth:`calc_excitation_eff`.
-        
+
         Returns
         -------
         UI element
-        
+
         See also
         --------
         calc_excitation_eff
@@ -678,11 +680,11 @@ class Analyzer:
     def calc_excitation_eff(self, dataset: str, n_components: int = 1,
                             component: int = 0):
         """Calculate excitation efficieny correction factor
-        
+
         Utilize data with known 1:1 stoichiometry to this end. To find the
         right parameters for this call, use
         :py:meth:`find_excitation_eff_component`.
-        
+
         Parameters
         ----------
         dataset
@@ -693,7 +695,7 @@ class Analyzer:
         component
             Identifier of the component to use. They are sorted in descending
             order w.r.t. mean stoichiometry.
-            
+
         See also
         --------
         sdt.fret.gaussian_mixture_split
@@ -705,12 +707,12 @@ class Analyzer:
 
     def fret_correction(self, *args, **kwargs):
         """Apply corrections to calculate real FRET-related values
-        
+
         Parameters
         ----------
         *args, **kwargs
             Passed to :py:meth:`sdt.fret.SmFretAnalyzer.fret_correction`
-            
+
         See also
         --------
         sdt.fret.SmFretAnalyzer.fret_correction
@@ -720,10 +722,10 @@ class Analyzer:
 
     def query(self, expr: str, mi_sep: str = "_"):
         """Filter localizations
-        
+
         Use :py:meth:`sdt.fret.SmFretAnalyzer.query` to select only
         datapoints (i.e., lines in tracking tables) that fulfill `expr`.
-        
+
         Parameters
         ----------
         expr
@@ -732,7 +734,7 @@ class Analyzer:
         mi_sep
             Use this to separate levels when flattening the column
             MultiIndex. Defaults to "_".
-            
+
         See also
         --------
         pandas.DataFrame.eval
@@ -744,10 +746,10 @@ class Analyzer:
     def query_particles(self, expr: str, min_abs: int = 1,
                         min_rel: float = 0.0, mi_sep: str = "_"):
         """Filter tracks
-        
+
         Use :py:meth:`sdt.fret.SmFretAnalyzer.query_particles` to select only
         trajectories that fulfill `expr` sufficiently many times.
-        
+
         Parameters
         ----------
         expr
@@ -763,7 +765,7 @@ class Analyzer:
         mi_sep
             Use this to separate levels when flattening the column
             MultiIndex. Defaults to "_".
-            
+
         See also
         --------
         pandas.DataFrame.eval
@@ -774,9 +776,9 @@ class Analyzer:
 
     def find_cell_mask_params(self) -> nbui.Thresholder:
         """UI for finding parameters for thresholding cell images
-        
+
         Parameters can be passed to :py:meth:`apply_cell_masks`.
-        
+
         Returns
         -------
             Widget instance.
@@ -791,11 +793,11 @@ class Analyzer:
 
     def apply_cell_masks(self, thresh_algorithm: str = "adaptive", **kwargs):
         """Remove datapoints from non-cell-occupied regions
-        
+
         Threshold cell images according to the parameters and use the resulting
         mask to discard datapoints not underneath cells. This is applied only
         to datasets which have ``special="cells"`` set.
-        
+
         Parameters
         ----------
         thresh_algorithm
