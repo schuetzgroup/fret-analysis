@@ -1063,7 +1063,10 @@ class DensityPlots(ipywidgets.Box):
         """
         if random_state is None:
             random_state = np.random.RandomState()
-        idx = random_state.choice(len(kde_x), replace=False, size=n_samp)
+        if n_samp < len(kde_x):
+            idx = random_state.choice(len(kde_x), replace=False, size=n_samp)
+        else:
+            idx = slice(None, None)
         kde = scipy.stats.gaussian_kde(np.array([kde_x[idx], kde_y[idx]]))
 
         dens = np.empty(len(x), dtype=float)
