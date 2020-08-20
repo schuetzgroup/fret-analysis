@@ -58,13 +58,13 @@ class Inspector:
             fname = df.iloc[0].name[0]
             fname_label.value = fname
 
-            d_frames = np.nonzero(exc == "d")[0]
-            a_frames = np.nonzero(exc == "a")[0]
+            d_frames = np.nonzero(self.excitation_seq == "d")[0]
+            a_frames = np.nonzero(self.excitation_seq == "a")[0]
 
             reps = frame // len(d_frames)
             res = frame - reps * len(d_frames)
-            fno_d = reps * len(exc) + d_frames[res]
-            fno_a = (reps * len(exc) +
+            fno_d = reps * len(self.excitation_seq) + d_frames[res]
+            fno_a = (reps * len(self.excitation_seq) +
                      a_frames[np.nonzero(a_frames > d_frames[res])[0][0]])
 
             with pims.open(str(self.data_dir / fname)) as fr:
