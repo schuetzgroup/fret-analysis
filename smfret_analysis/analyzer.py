@@ -8,7 +8,7 @@ from io import BytesIO
 import itertools
 import math
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Union
+from typing import Any, Callable, Dict, Optional, Sequence, Union
 try:
     from typing import Literal
 except ImportError:
@@ -18,13 +18,12 @@ import warnings
 
 import ipywidgets
 import matplotlib as mpl
-from matplotlib import gridspec
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import scipy.stats
 
-from sdt import changepoint, chromatic, flatfield, fret, image, nbui, plot, roi
+from sdt import changepoint, flatfield, fret, image, nbui, plot, roi
 
 from .tracker import Tracker
 from .version import output_version
@@ -64,7 +63,7 @@ class Analyzer:
 
         self.rois = cfg["rois"]
         self.excitation_seq = cfg["tracker"].excitation_seq
-        self.analyzers = {k: fret.SmFretAnalyzer(v, self.excitation_seq)
+        self.analyzers = {k: fret.SmFretAnalyzer(v)
                           for k, v in cfg["track_data"].items()}
         self.sources = cfg["sources"]
         self.cell_images = cfg["cell_images"]
@@ -77,14 +76,6 @@ class Analyzer:
         self._beam_shape_artists = [None, None]
         self._beta_population_fig = None
         self._eff_stoi_fig = None
-
-    def flag_excitation_type(self):
-        """Add a column indicating excitation type (donor/acceptor/...)
-
-        Add  ("fret", "exc_type") column. It is of "category" type.
-        """
-        for a in self.analyzers.values():
-            a.flag_excitation_type()
 
     def present_at_start(self, frame: Optional[int] = None,
                          special: Optional[Sequence["str"]] = None):
@@ -555,7 +546,7 @@ class Analyzer:
                                       Literal["individual"]] = "individual",
                            aggregate: Literal["dataset", "all"] = "dataset",
                            dataset: Optional[str] = None):
-        """Calculate detection efficieny correction factor
+        r"""Calculate detection efficieny correction factor
 
         The detection efficiency ratio is the ratio of decrease in acceptor
         brightness to the increase in donor brightness upon acceptor
@@ -1112,10 +1103,10 @@ class DensityPlots(ipywidgets.Box):
                         np.linspace(*self._bounds[1], 100)))
         contour_grid_flat = np.reshape(contour_grid, (2, -1))
         a.contourf(*contour_grid,
-                  self._calc_kde(x, y, *contour_grid_flat).reshape(
+                   self._calc_kde(x, y, *contour_grid_flat).reshape(
                       contour_grid.shape[1:]),
-                  cmap=mpl.cm.get_cmap("viridis", n_levels),
-                  levels=n_levels)
+                   cmap=mpl.cm.get_cmap("viridis", n_levels),
+                   levels=n_levels)
 
     def _do_mesh(self, a: mpl.axes.Axes, x: np.ndarray, y: np.ndarray):
         """Create density plot

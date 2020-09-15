@@ -6,8 +6,7 @@
 import re
 import collections
 from pathlib import Path
-from typing import (Any, Callable, Dict, Iterable, Optional, Sequence, Tuple,
-                    Union)
+from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
 try:
     from typing import Literal
 except ImportError:
@@ -104,7 +103,7 @@ class RegistrationLocator(Locator):
         super().__init__(tracker, tracker.locators[f"reg_{channel}"])
         self._channel = channel
         self._set_files(tracker.special_sources["registration"])
-        self._locator._image_display.auto_scale()
+        self._locator.image_display.auto_scale()
 
     def _make_image_sequence(self, don, acc):
         if self._channel == "donor":
@@ -123,7 +122,7 @@ class FRETLocator(Locator):
         self._dataset_selector.observe(self._dataset_changed, "value")
 
         self._dataset_selector.options = list(tracker.sources)
-        self._locator._image_display.auto_scale()
+        self._locator.image_display.auto_scale()
 
     def _dataset_changed(self, change=None):
         src = self._tracker.sources[self._dataset_selector.value]["files"]
