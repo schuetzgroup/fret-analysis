@@ -21,6 +21,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pims
+import traitlets
 
 from sdt import chromatic, helper, io, image, nbui, roi
 from sdt import flatfield as _flatfield  # avoid name clashes
@@ -145,6 +146,16 @@ class AcceptorLocator(FRETLocator):
         return self._tracker.tracker.frame_selector(acc, "a")
 
 
+class _ChannelSplitter(ipywidgets.VBox):
+    def __init__(self, tracker):
+        self.image_selector = nbui.ImageSelector()
+
+        traitlets.link((self.image_selector, "output"),
+                       (tracker.channel_splitter, "input"))
+
+        super().__init__([self.image_selector, tracker.channel_splitter])
+
+
 class Tracker:
     """Jupyter notebook UI for single molecule FRET tracking
 
@@ -161,16 +172,10 @@ class Tracker:
     """Map of channel name -> :py:class:`roi.ROI` instances (or `None`).
     Contains "donor" and "acceptor" keys.
     """
-    def __init__(self, don_o: Optional[Tuple[int, int]] = None,
-                 acc_o: Optional[Tuple[int, int]] = None,
-                 roi_size: Optional[Tuple[int, int]] = None,
-                 excitation_seq: str = "da", data_dir: Union[str, Path] = ""):
+    def __init__(self, excitation_seq: str = "da",
+                 data_dir: Union[str, Path] = ""):
         """Parameters
         ----------
-        don_o, acc_o
-            Origin (top left corner) of the donor and acceptor channel ROIs
-        roi_size
-            Width and height of the ROIs
         excitation_seq
             Excitation sequence. Use "d" for excitation, "a" for acceptor
             excitation, and "c" for a image of the cell.
@@ -181,13 +186,7 @@ class Tracker:
             :py:meth:`add_dataset`) are take relative to this. Defaults to "",
             which is the current working directory.
         """
-        d_roi = (roi.ROI(don_o, size=roi_size)
-                 if don_o is not None and roi_size is not None
-                 else None)
-        a_roi = (roi.ROI(acc_o, size=roi_size)
-                 if acc_o is not None and roi_size is not None
-                 else None)
-        self.rois = {"donor": d_roi, "acceptor": a_roi}
+        self.rois = {"donor": None, "acceptor": None}
 
         self.tracker = SmFretTracker(excitation_seq)
         """:py:class:`SmFretTracker` instance used for tracking"""
@@ -215,6 +214,9 @@ class Tracker:
         """:py:class:`nbui.Locator` instances for locating "beads", "donor"
         emission data, "acceptor" emission data.
         """
+        self.channel_splitter = nbui.ChannelSplitter()
+        self._channel_splitter_active = False
+        self.channel_splitter.observe(self._channel_rois_set, "rois")
 
     def _get_files(self, files_re: str, acc_files_re: Optional[str] = None):
         files = io.get_files(files_re, self.data_dir)[0]
@@ -255,6 +257,37 @@ class Tracker:
         s = collections.OrderedDict(
             [("files", files), ("special", special)])
         self.sources[key] = s
+
+    def split_channels(self, files_re: str) -> ipywidgets.Widget:
+        """Split image data into donor and acceptor emission channels
+
+        Define rectangular regions for the channels. This is applicable if
+        both channels were recorded side-by-side using the same camera.
+
+        Parameters
+        ----------
+        files_re
+            Regular expression describing some examplary image file names.
+            Names should be relative to :py:attr:`data_dir`. Use forward
+            slashes as path separators.
+        """
+        self._splitter_active = False
+        files = [self.data_dir / f for f in self._get_files(files_re, None)]
+        splt = _ChannelSplitter(self)
+        splt.image_selector.images = files
+        self.channel_splitter.image_display.auto_scale()
+
+        self.channel_splitter.rois = (self.rois["donor"],
+                                      self.rois["acceptor"])
+        self._splitter_active = True
+        return splt
+
+    def _channel_rois_set(self, change=None):
+        """Callback if channel ROIs were set using the ChannelSplitter UI"""
+        if not self._splitter_active:
+            return
+        self.rois["donor"], self.rois["acceptor"] = \
+            self.channel_splitter.rois
 
     def add_special_dataset(self,
                             kind: Literal["registration", "acc-only",
