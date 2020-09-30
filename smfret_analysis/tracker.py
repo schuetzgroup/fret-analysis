@@ -6,7 +6,7 @@
 import re
 import collections
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Optional, Sequence, Union
 try:
     from typing import Literal
 except ImportError:
@@ -125,7 +125,7 @@ class FRETLocator(Locator):
         self._locator.image_display.auto_scale()
 
     def _dataset_changed(self, change=None):
-        src = self._tracker.sources[self._dataset_selector.value]["files"]
+        src = self._tracker.sources[self._dataset_selector.value]
         self._set_files(src)
 
 
@@ -221,14 +221,11 @@ class Tracker:
         files = io.get_files(files_re, self.data_dir)[0]
         if acc_files_re is not None:
             acc_files = io.get_files(acc_files_re, self.data_dir)[0]
-            files = [{"donor": d, "acceptor": a}
-                     for d, a in zip(files, acc_files)]
+            files = list(zip(files, acc_files))
         return files
 
     def add_dataset(self, key: str, files_re: str,
-                    acc_files_re: Optional[str] = None,
-                    special: Literal["none", "cells", "don-only",
-                                     "acc-only"] = "none"):
+                    acc_files_re: Optional[str] = None):
         """Add a dataset
 
         A typical experiment consists of several datasets (e.g., the actual
@@ -242,20 +239,11 @@ class Tracker:
         files_re
             Regular expression describing image file names relative to
             :py:attr:`data_dir`. Use forward slashes as path separators.
-        special
-            "cells" means that this sample contains images of cells, which will
-            be extracted usinge :py:meth:`extract_cell_images`. "don-only"
-            and "acc-only" mark a samples missing acceptor or donor
-            fluorophores, respectively. These receive special treatment for
-            calculating correction factors in :py:class:`Analyzer`. If none of
-            this applies, set to "none" (the default).
         """
         files = self._get_files(files_re, acc_files_re)
         if not files:
             warnings.warn(f"Empty dataset added: {key}")
-        s = collections.OrderedDict(
-            [("files", files), ("special", special)])
-        self.sources[key] = s
+        self.sources[key] = files
 
     def split_channels(self, files_re: str) -> ipywidgets.Widget:
         """Split image data into donor and acceptor emission channels
@@ -387,9 +375,9 @@ class Tracker:
         return pims.open(str(pth))
 
     def _open_image_sequence(self, f):
-        if isinstance(f, dict):
-            don = self._pims_open_no_warn(f["donor"])
-            acc = self._pims_open_no_warn(f["acceptor"])
+        if isinstance(f, tuple):
+            don = self._pims_open_no_warn(f[0])
+            acc = self._pims_open_no_warn(f[1])
             to_close = [don, acc]
         else:
             don = acc = self._pims_open_no_warn(f)
@@ -439,14 +427,14 @@ class Tracker:
         Localization data for each dataset is collected in the
         :py:attr:`loc_data` dictionary.
         """
-        num_files = sum(len(s["files"]) for s in self.sources.values())
+        num_files = sum(len(s) for s in self.sources.values())
         cnt = 1
         label = ipywidgets.Label(value="Starting…")
         display(label)
 
-        for key, src in self.sources.items():
+        for key, files in self.sources.items():
             ret = []
-            files = src["files"]
+            ret_keys = []
             for i, f in enumerate(files):
                 label.value = f"Locating {f} ({cnt}/{num_files})"
                 cnt += 1
@@ -467,7 +455,14 @@ class Tracker:
 
                 for o in opened:
                     o.close()
-            self.loc_data[key] = pd.concat(ret, keys=files)
+
+                if isinstance(f, tuple):
+                    # Wrap into another tuple to avoid having a MultiIndex with
+                    # three levels
+                    ret_keys.append((f,))
+                else:
+                    ret_keys.append(f)
+            self.loc_data[key] = pd.concat(ret, keys=ret_keys)
 
     def track(self, feat_radius: int = 4, bg_frame: int = 3,
               link_radius: float = 1.0, link_mem: int = 1, min_length: int = 4,
@@ -516,7 +511,7 @@ class Tracker:
             considered overlapping and may be filtered later. If `None`,
             use ``2 * feat_radius + 1``. Defaults to `None`.
         """
-        num_files = sum(len(s["files"]) for s in self.sources.values())
+        num_files = sum(len(s) for s in self.sources.values())
         cnt = 1
         label = ipywidgets.Label(value="Starting…")
         display(label)
@@ -532,11 +527,11 @@ class Tracker:
         else:
             self.tracker.neighbor_radius = 2 * feat_radius + 1
 
-        for key, src in self.sources.items():
+        for key, files in self.sources.items():
             ret = []
             ret_keys = []
             new_p = 0  # Particle ID unique across files
-            for f in src["files"]:
+            for f in files:
                 label.value = f"Tracking {f} ({cnt}/{num_files})"
                 cnt += 1
 
@@ -577,7 +572,13 @@ class Tracker:
                     d.loc[ps == p, ("fret", "particle")] = new_p
                     new_p += 1
                 ret.append(d)
-                ret_keys.append(f)
+
+                if isinstance(f, tuple):
+                    # Wrap into another tuple to avoid having a MultiIndex with
+                    # three levels
+                    ret_keys.append((f,))
+                else:
+                    ret_keys.append(f)
 
                 for o in opened:
                     o.close()
@@ -589,8 +590,6 @@ class Tracker:
 
         This extracts the images of cell contours for use with
         :py:class:`Analyzer`. Images are copied to :py:attr:`cell_images`.
-        This is only applied to datasets where ``special="cells"`` was set when
-        adding them using :py:meth:`add_dataset`.
 
         Parameters
         ----------
@@ -599,11 +598,10 @@ class Tracker:
             ``excitation_seq`` parameter to :py:meth:`__init__`. Defaults to
             "c".
         """
-        for k, v in self.sources.items():
-            if not v["special"].startswith("c"):
-                # no cells
-                continue
-            for f in v["files"]:
+        self.cell_images.clear()
+
+        for k, files in self.sources.items():
+            for f in files:
                 im_seq, opened = self._open_image_sequence(f)
                 cell_fr = self.tracker.frame_selector(im_seq[channel], key)
                 self.cell_images[f] = np.array(cell_fr)
@@ -667,8 +665,7 @@ class Tracker:
             imgs, smooth_sigma=smooth_sigma, gaussian_fit=gaussian_fit)
 
     def make_flatfield_sm(self, dest: Literal["donor", "acceptor"],
-                          keys: Union[Sequence[str],
-                                      Literal["all", "no-special"]] = "all",
+                          keys: Union[Sequence[str], Literal["all"]] = "all",
                           weighted: bool = False, frame: Optional[int] = None):
         """Calculate flatfield correction from single-molecule data
 
@@ -685,23 +682,18 @@ class Tracker:
             acceptor excitation.
         keys
             Names of datasets to use for calculation. "all" will use all
-            datasets. "no-special" will use only datasets where
-            ``special=none`` was set when adding them via
-            :py:meth:`add_dataset`. Defaults to "all".
+            datasets.
         weighted
             Weigh data inversely to density when performing a Gaussian fit.
             Not very robust, thus the default is `False`.
         frame
             Select only data from this frame. If `None`, use the first frame
-            corresponding to `dest`. Defaults to `None`.
+            corresponding to `dest`.
         """
         if not len(keys):
             return
         if keys == "all":
             keys = self.track_data.keys()
-        elif keys == "no-special":
-            keys = [k for k in self.track_data.keys()
-                    if self.sources[k]["special"].startswith("s")]
 
         if frame is None:
             frame = self.tracker.excitation_frames[dest[0]][0]
@@ -758,12 +750,23 @@ class Tracker:
 
             with pd.HDFStore(outfile.with_suffix(".h5")) as s:
                 for key, loc in self.loc_data.items():
-                    s["{}_loc".format(key)] = loc
+                    s.put("{}_loc".format(key), loc)
                 for key, trc in self.track_data.items():
-                    s["{}_trc".format(key)] = trc
+                    # Categorical exc_type does not allow for storing in fixed
+                    # format while multiindex for both rows and columns does
+                    # not work with table format…
+                    s.put("{}_trc".format(key), trc.astype(
+                        {("fret", "exc_type"): str}))
 
+        cell_img_save = collections.OrderedDict()
+        for k, v in self.cell_images.items():
+            if isinstance(k, tuple):
+                new_k = "\n".join(k)
+            else:
+                new_k = k
+            cell_img_save[new_k] = v
         np.savez_compressed(outfile.with_suffix(".cell_img.npz"),
-                            **self.cell_images)
+                            **cell_img_save)
         for k, ff in self.flatfield.items():
             ff.save(outfile.with_suffix(f".flat_{k}.npz"))
 
@@ -803,6 +806,12 @@ class Tracker:
                "cell_images": collections.OrderedDict(),
                "flatfield": collections.OrderedDict()}
 
+        # Restore file tuples which were converted to lists by saving to YAML
+        for src in ret["sources"], ret["special_sources"]:
+            for k, files in src.items():
+                src[k] = [tuple(f) if isinstance(f, list) else f
+                          for f in files]
+
         do_load = []
         if loc:
             do_load.append((ret["loc_data"], "_loc"))
@@ -814,13 +823,27 @@ class Tracker:
                     keys = (k for k in s.keys() if k.endswith(suffix))
                     for k in keys:
                         new_key = k[1:-len(suffix)]
-                        sink[new_key] = s[k]
+                        loaded = s[k]
+                        if suffix == "_trc":
+                            # Restore categorical exc_type. See comment in
+                            # `save` method for details.
+                            loaded = loaded.astype(
+                                {("fret", "exc_type"): "category"})
+                        sink[new_key] = loaded
 
         if cell_images:
             cell_img_file = infile.with_suffix(".cell_img.npz")
             try:
                 with np.load(cell_img_file) as data:
-                    ret["cell_images"] = collections.OrderedDict(data)
+                    ci = collections.OrderedDict(data)
+                ret["cell_images"] = collections.OrderedDict()
+                for k, v in ci.items():
+                    k_split = k.split("\n")
+                    if len(k_split) == 1:
+                        new_k = k_split[0]
+                    else:
+                        new_k = tuple(k_split)
+                    ret["cell_images"][new_k] = v
             except Exception:
                 warnings.warn("Could not load cell images from file "
                               f"\"{str(cell_img_file)}\".")
