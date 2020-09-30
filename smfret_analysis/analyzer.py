@@ -38,7 +38,7 @@ class Analyzer:
     """channel name -> ROI"""
     excitation_seq: np.ndarray
     """Array of characters describing the excitation sequence."""
-    analyzers: Dict[str, fret.SmFretAnalyzer]
+    analyzers: Dict[str, fret.SmFRETAnalyzer]
     """dataset key -> analyzer class instance"""
     sources: Dict[str, Dict]
     """dataset key -> source file information. The information is a dict
@@ -63,7 +63,7 @@ class Analyzer:
 
         self.rois = cfg["rois"]
         self.excitation_seq = cfg["tracker"].excitation_seq
-        self.analyzers = {k: fret.SmFretAnalyzer(v)
+        self.analyzers = {k: fret.SmFRETAnalyzer(v)
                           for k, v in cfg["track_data"].items()}
         self.sources = cfg["sources"]
         self.cell_images = cfg["cell_images"]

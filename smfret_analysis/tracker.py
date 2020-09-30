@@ -21,11 +21,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pims
-import traitlets
 
-from sdt import chromatic, helper, io, image, nbui, roi
+from sdt import channel_reg, helper, io, image, nbui, roi
 from sdt import flatfield as _flatfield  # avoid name clashes
-from sdt.fret import SmFretTracker
+from sdt.fret import SmFRETTracker
 
 from .version import output_version
 
@@ -188,7 +187,7 @@ class Tracker:
         """
         self.rois = {"donor": None, "acceptor": None}
 
-        self.tracker = SmFretTracker(excitation_seq)
+        self.tracker = SmFRETTracker(excitation_seq)
         """:py:class:`SmFretTracker` instance used for tracking"""
         self.sources = collections.OrderedDict()
         """dict of dataset name (see :py:meth:`add_dataset`) -> information
@@ -303,8 +302,8 @@ class Tracker:
         """Display widget to set localization options for channel registration
 
         for image registration. After finishing, call
-        :py:meth:`calc_registration` to create a :py:class:`chromatic.Corrector`
-        object.
+        :py:meth:`calc_registration` to create a
+        :py:class:`channel_reg.Registrator` object.
 
         Parameters
         ----------
@@ -335,7 +334,7 @@ class Tracker:
 
         Localize beads using the options set with :py:meth:`set_bead_loc_opts`,
         find pairs and fit transformation. Store result in
-        :py:attr:`self.tracker.chromatic_corr`.
+        :py:attr:`self.tracker.registrator`.
 
         Parameters
         ----------
@@ -345,7 +344,7 @@ class Tracker:
             Maximum frame number to consider. Useful if beads defocused in
             later frames. If `None` use all frames.
         params
-            Passed to :py:meth:`chromatic.Corrector.determine_parameters`.
+            Passed to :py:meth:`channel_reg.Registrator.determine_parameters`.
 
         Returns
         -------
@@ -368,9 +367,9 @@ class Tracker:
                                         **locator.options)
                 locs[chan].append(lo)
         label.layout = ipywidgets.Layout(display="none")
-        cc = chromatic.Corrector(locs["donor"], locs["acceptor"])
+        cc = channel_reg.Registrator(locs["donor"], locs["acceptor"])
         cc.determine_parameters(**params or {})
-        self.tracker.chromatic_corr = cc
+        self.tracker.registrator = cc
 
         if plot:
             fig, ax = plt.subplots(1, 2)
@@ -418,8 +417,7 @@ class Tracker:
         -------
             Sum of transformed donor image(s) and acceptor image(s)
         """
-        don_fr_corr = self.tracker.chromatic_corr(don_fr, channel=1,
-                                                  cval=np.mean)
+        don_fr_corr = self.tracker.registrator(don_fr, channel=1, cval=np.mean)
         s = _img_sum(don_fr_corr, acc_fr)
         return self.tracker.frame_selector(s, "d")
 
