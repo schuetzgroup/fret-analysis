@@ -149,10 +149,18 @@ class _ChannelSplitter(ipywidgets.VBox):
     def __init__(self, tracker):
         self.image_selector = nbui.ImageSelector()
 
-        traitlets.link((self.image_selector, "output"),
-                       (tracker.channel_splitter, "input"))
+        # The following fails due to output and input being arrays and `link`
+        # trying to compary using a simple !=
+        # traitlets.link((self.image_selector, "output"),
+        #                (tracker.channel_splitter, "input"))
+        # Therefore, use `observe`
+        self._tracker = tracker
+        self.image_selector.observe(self._image_selected, "output")
 
         super().__init__([self.image_selector, tracker.channel_splitter])
+
+    def _image_selected(self, change=None):
+        self._tracker.channel_splitter.input = self.image_selector.output
 
 
 class Tracker:
@@ -214,6 +222,7 @@ class Tracker:
         emission data, "acceptor" emission data.
         """
         self.channel_splitter = nbui.ChannelSplitter()
+        self.channel_splitter.channel_names = ("donor", "acceptor")
         self._channel_splitter_active = False
         self.channel_splitter.observe(self._channel_rois_set, "rois")
 
