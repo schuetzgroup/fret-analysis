@@ -65,6 +65,7 @@ class Analyzer:
         self.excitation_seq = cfg["tracker"].excitation_seq
         self.analyzers = {k: fret.SmFRETAnalyzer(v)
                           for k, v in cfg["track_data"].items()}
+        self.special_analyzers = {}  # TODO
         self.sources = cfg["sources"]
         self.cell_images = cfg["cell_images"]
         self.flatfield = cfg["flatfield"]
@@ -77,19 +78,15 @@ class Analyzer:
         self._beta_population_fig = None
         self._eff_stoi_fig = None
 
-    def present_at_start(self, frame: Optional[int] = None,
-                         special: Optional[Sequence["str"]] = None):
+    def present_at_start(self, frame: Optional[int] = None):
         """Remove tracks that are not present in the beginning
 
         Parameters
         ----------
         frame
             Start frame number. If `None`, use first donor excitation frame
-            except for samples with ``special="acc-only"``, where the first
-            acceptor excitation frame is used.
-        special
-            Only apply filter to datasets with ``special=`` set to something
-            in this list.
+            except for the acceptor-only sample, where the first acceptor
+            excitation frame is used.
         """
         if frame is None:
             frame_d = np.nonzero(self.excitation_seq == "d")[0][0]
@@ -99,16 +96,25 @@ class Analyzer:
         else:
             frame_d = frame_a = frame
 
-        for k, v in self.sources.items():
-            if special is not None and v["special"] not in special:
-                continue
-            if v["special"].startswith("a"):
-                # acceptor-only
-                f = frame_a
-            else:
-                f = frame_d
-
-            self.analyzers[k].query_particles(f"donor_frame == {f}")
+        query_pat = "donor_frame == {}"
+        query_d = query_pat.format(frame_d)
+        for ana in self.analyzers.values():
+            ana.query_particles(query_d)
+        for key, ana in self.special_analyzers.items():
+            if key.endswith("only"):
+                if key[0] == "d":
+                    ana.query_particles(query_d)
+                elif key[0] == "a":
+                    if frame is None:
+                        try:
+                            frame_a = np.nonzero(
+                                self.excitation_seq == "a")[0][0]
+                        except IndexError:
+                            raise ValueError(
+                                'excitation_seq does not contain "a".')
+                    else:
+                        frame_a = frame
+                    ana.query_particles(query_pat.format(frame_a))
 
     def find_beam_shape_thresh(self) -> ipywidgets.Widget:
         """Display a widget to set the laser intensity threshold
