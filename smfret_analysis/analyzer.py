@@ -351,9 +351,6 @@ class Analyzer:
         fret.SmFretAnalyzer.bleach_step
         """
         for k, v in self.sources.items():
-            if v["special"].startswith("d") or v["special"].startswith("a"):
-                # Don't filter donor-only and acceptor-only samples
-                continue
             a = self.analyzers[k]
             a.bleach_step(donor_thresh, acceptor_thresh, truncate=False)
 
@@ -786,12 +783,13 @@ class Analyzer:
         if self._thresholder is None:
             self._thresholder = nbui.Thresholder()
 
-        self._thresholder.images = collections.OrderedDict(
+        self._thresholder.image_selector.images = collections.OrderedDict(
             [(k, v[0]) for k, v in self.cell_images.items()])
 
         return self._thresholder
 
-    def apply_cell_masks(self, thresh_algorithm: str = "adaptive", **kwargs):
+    def apply_cell_masks(self, keys: Sequence[str],
+                         thresh_algorithm: str = "adaptive", **kwargs):
         """Remove datapoints from non-cell-occupied regions
 
         Threshold cell images according to the parameters and use the resulting
@@ -800,6 +798,8 @@ class Analyzer:
 
         Parameters
         ----------
+        keys
+            Which datasets to apply cell masks to.
         thresh_algorithm
             Use the ``thresh_algorithm + "_thresh"`` function from
             :py:mod:`sdt.image` for thresholding.
@@ -809,10 +809,7 @@ class Analyzer:
         if isinstance(thresh_algorithm, str):
             thresh_algorithm = getattr(image, thresh_algorithm + "_thresh")
 
-        for k, v in self.sources.items():
-            if not v["special"].startswith("c"):
-                continue
-
+        for k in keys:
             ana = self.analyzers[k]
             files = np.unique(ana.tracks.index.levels[0])
 
