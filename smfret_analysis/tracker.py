@@ -617,9 +617,11 @@ class Tracker:
                 for o in opened:
                     o.close()
 
-    def make_flatfield(self, dest: Literal["donor", "acceptor"], files_re: str,
+    def make_flatfield(self, dest: Literal["donor", "acceptor"],
                        src: Optional[Literal["donor", "acceptor"]] = None,
-                       frame: int = 0, bg: Union[float, np.ndarray] = 200,
+                       frame: Union[int, slice, Literal["all"],
+                                    Sequence[int]] = 0,
+                       bg: Union[float, np.ndarray] = 200,
                        smooth_sigma: float = 3., gaussian_fit: bool = False):
         """Calculate flatfield correction from separate bulk images
 
@@ -638,40 +640,45 @@ class Tracker:
             :py:attr:`data_dir`. Use forward slashes as path separators.
         src
             Whether to use the donor or acceptor emission channel. If `None`,
-            use the same as `dest`. Defaults to `None`.
+            use the same as `dest`.
         frame
             Which frame in the image sequences described by `files_re` to use.
-            Defaults to `None`.
         bg
             Camera background. Either a value or an image data array.
-            Defaults to 200.
         smooth_sigma
-            Sigma for Gaussian blur to smoothe images. Defaults to 3.
+            Sigma for Gaussian blur to smoothe images.
         gaussian_fit
             If `True`, perform a Gaussian fit to the excitation profiles.
-            Otherwise, use the mean of the `frame`-th images from the files
-            described by `files_re`. Defaults to `False`.
         """
-        files = io.get_files(files_re, self.data_dir)[0]
         if src is None:
             src = dest
+        if frame == "all":
+            frame = slice(None)
+        elif isinstance(frame, int):
+            frame = [frame]
 
         imgs = []
-        for f in files:
-            im_seq, opened = self._open_image_sequence(f)
-            im = im_seq[src][frame].astype(float) - bg
-            imgs.append(im)
-            for o in opened:
+        all_opened = []
+        try:
+            for f in self.special_sources[f"{src}-profile"]:
+                im_seq, opened = self._open_image_sequence(f)
+                all_opened.extend(opened)
+                im = im_seq[src][frame]
+                imgs.append(im)
+
+            if src.startswith("a") and dest.startswith("d"):
+                imgs = [self.tracker.registrator(i, channel=2)
+                        for i in imgs]
+            elif src != dest:
+                raise ValueError("src != dest and (src != \"acceptor\" and "
+                                 "dest != \"donor\")")
+
+            self.flatfield[dest] = _flatfield.Corrector(
+                imgs, smooth_sigma=smooth_sigma, bg=bg,
+                gaussian_fit=gaussian_fit)
+        finally:
+            for o in all_opened:
                 o.close()
-
-        if src == "acceptor" and dest == "donor":
-            imgs = [self.tracker.chromatic_corr(i, channel=2) for i in imgs]
-        elif src != dest:
-            raise ValueError("src != dest and (src != \"acceptor\" and dest "
-                             "!= \"donor\")")
-
-        self.flatfield[dest] = _flatfield.Corrector(
-            imgs, smooth_sigma=smooth_sigma, gaussian_fit=gaussian_fit)
 
     def make_flatfield_sm(self, dest: Literal["donor", "acceptor"],
                           keys: Union[Sequence[str], Literal["all"]] = "all",
@@ -723,9 +730,14 @@ class Tracker:
             data.append(d)
 
         r = self.rois[dest]
-        img_shape = (r.bottom_right[1] - r.top_left[1],
-                     r.bottom_right[0] - r.top_left[0])
-        self.flatfield[dest] = _flatfield.Corrector(*data, shape=img_shape,
+        if r is not None:
+            img_shape = (r.bottom_right[1] - r.top_left[1],
+                         r.bottom_right[0] - r.top_left[0])
+        else:
+            raise NotImplementedError("Determination of image size without "
+                                      "channel ROIs has not been implemented "
+                                      "yet.")
+        self.flatfield[dest] = _flatfield.Corrector(data, shape=img_shape,
                                                     density_weight=weighted)
 
     def save(self, file_prefix: str = "tracking"):
