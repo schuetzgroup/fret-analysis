@@ -25,15 +25,45 @@ class Inspector:
         self.rois = cfg["rois"]
         self.data_dir = cfg["data_dir"]
 
+    # Copied from Tracker
+    def _pims_open_no_warn(self, f):
+        pth = self.data_dir / f
+        if pth.suffix.lower() == ".spe":
+            # Disable warnings about file size being wrong which is caused
+            # by SDT-control not dumping the whole file
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                return pims.open(str(pth))
+        return pims.open(str(pth))
+
+    def _open_image_sequence(self, f):
+        if isinstance(f, tuple):
+            don = self._pims_open_no_warn(f[0])
+            acc = self._pims_open_no_warn(f[1])
+            to_close = [don, acc]
+        else:
+            don = acc = self._pims_open_no_warn(f)
+            to_close = [don]
+
+        ret = {}
+        for ims, chan in [(don, "donor"), (acc, "acceptor")]:
+            if self.rois[chan] is not None:
+                ims = self.rois[chan](ims)
+            ret[chan] = ims
+        return ret, to_close
+    # End of copy
+
     def make_dataset_selector(self, state, callback):
         d_sel = ipywidgets.Dropdown(options=list(self.track_data.keys()),
                                     description="dataset")
 
         def change_dataset(key=None):
-            tr = self.track_data[d_sel.value]
-            state["tr"] = tr
-            state["pnos"] = tr["fret", "particle"].unique()
-            state["files"] = tr.index.remove_unused_levels().levels[0].unique()
+            trc = self.track_data[d_sel.value]
+            state["id"] = d_sel.value
+            state["trc"] = trc
+            state["pnos"] = trc["fret", "particle"].unique()
+            state["files"] = \
+                trc.index.remove_unused_levels().levels[0].unique()
 
             callback()
 
@@ -53,10 +83,10 @@ class Inspector:
         def show_track(arg=None):
             particle = state["pnos"][p_sel.value]
             frame = f_sel.value
-            df = state["tr"]
+            df = state["trc"]
             df = df[df["fret", "particle"] == particle]
-            fname = df.iloc[0].name[0]
-            fname_label.value = fname
+            fnames = df.iloc[0].name[0]
+            fname_label.value = str(fnames)
 
             d_frames = np.nonzero(self.excitation_seq == "d")[0]
             a_frames = np.nonzero(self.excitation_seq == "a")[0]
@@ -67,9 +97,12 @@ class Inspector:
             fno_a = (reps * len(self.excitation_seq) +
                      a_frames[np.nonzero(a_frames > d_frames[res])[0][0]])
 
-            with pims.open(str(self.data_dir / fname)) as fr:
-                img_d = fr[fno_d]
-                img_a = fr[fno_a]
+            imgs, to_close = self._open_image_sequence(fnames)
+            img_dd = imgs["donor"][fno_d]
+            img_da = imgs["acceptor"][fno_d]
+            img_aa = imgs["acceptor"][fno_a]
+            for c in to_close:
+                c.close()
 
             for a in (ax_d, ax_a, ax_aa):
                 a.cla()
@@ -79,9 +112,11 @@ class Inspector:
             ax_a.set_title("acceptor")
             ax_aa.set_title("acceptor (direct)")
 
-            img_dd = self.rois["donor"](img_d)
-            img_da = self.rois["acceptor"](img_d)
-            img_aa = self.rois["acceptor"](img_a)
+            if self.rois["donor"] is not None:
+                img_dd = self.rois["donor"](img_dd)
+            if self.rois["acceptor"] is not None:
+                img_da = self.rois["acceptor"](img_da)
+                img_aa = self.rois["acceptor"](img_aa)
 
             ax_d.imshow(img_dd, vmin=img_dd.min())
             ax_a.imshow(img_da, vmin=img_da.min())
@@ -123,7 +158,7 @@ class Inspector:
         def show_track(particle=None):
             ax.cla()
             p = state["pnos"][p_sel.value]
-            tr = state["tr"]
+            tr = state["trc"]
             t = tr[tr["fret", "particle"] == p]
             c = ax.plot(t["donor", "x"], t["donor", "y"], marker=".")
             fig.canvas.draw()
@@ -142,16 +177,22 @@ class Inspector:
 
         def draw(particle=None):
             fig.clf()
-            tr = state["tr"]
+            tr = state["trc"]
             t0 = tr[tr["fret", "particle"] == state["pnos"][p_sel.value]]
-            fname = t0.index[0][0]
+            fnames = t0.index[0][0]
 
-            with pims.open(str(self.data_dir / fname)) as img:
-                don_img = self.rois["donor"](img)
-                acc_img = self.rois["acceptor"](img)
+            imgs, to_close = self._open_image_sequence(fnames)
+            don_img = imgs["donor"]
+            acc_img = imgs["acceptor"]
+            if self.rois["donor"] is not None:
+                don_img = self.rois["donor"](don_img)
+            if self.rois["acceptor"] is not None:
+                acc_img = self.rois["acceptor"](acc_img)
+            fret.draw_track(t0, p_sel.value, don_img, acc_img, img_size,
+                            n_cols=n_cols, figure=fig)
+            for c in to_close:
+                c.close()
 
-                fret.draw_track(t0, p_sel.value, don_img, acc_img, img_size,
-                                n_cols=n_cols, figure=fig)
             fig.canvas.draw()
 
         p_sel.observe(draw, names="value")
@@ -166,11 +207,11 @@ class Inspector:
         f_sel = ipywidgets.Dropdown(description="file")
 
         def fill_f_sel():
-            f_sel.options = state["files"]
+            f_sel.options = [(str(f), f) for f in state["files"]]
 
         def plot(file=None):
             ax.cla()
-            d = state["tr"].loc[f_sel.value]
+            d = state["trc"].loc[f_sel.value]
             for p, trc in helper.split_dataframe(
                     d, ("fret", "particle"),
                     [("donor", "x"), ("donor", "y")]):
@@ -203,7 +244,7 @@ class Inspector:
 
             info = []
 
-            data = state["tr"]
+            data = state["trc"]
             for p in particles:
                 d = data[(data["fret", "particle"] == p)]
                 for a, (x, y) in zip(ax, axes):
