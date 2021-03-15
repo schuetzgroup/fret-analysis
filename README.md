@@ -6,8 +6,13 @@ SPDX-License-Identifier: CC-BY-4.0
 
 # Single molecule FRET analysis
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.4604567.svg)](https://doi.org/10.5281/zenodo.4604567)
+
 This repository contains a Python package and several Jupyter notebooks to
 analyze single molecule FRET data.
+
+If you use this software in a project resulting in a scientific publication,
+please [cite](https://doi.org/10.5281/zenodo.4604567) the software.
 
 
 ## Suggested workflow:
