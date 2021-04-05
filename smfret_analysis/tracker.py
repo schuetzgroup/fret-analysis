@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 import pims
 
-from sdt import channel_reg, helper, io, image, nbui, roi
+from sdt import helper, io, image, multicolor, nbui, roi
 from sdt import flatfield as _flatfield  # avoid name clashes
 from sdt.fret import SmFRETTracker
 
@@ -300,7 +300,7 @@ class Tracker:
 
         for image registration. After finishing, call
         :py:meth:`calc_registration` to create a
-        :py:class:`channel_reg.Registrator` object.
+        :py:class:`multicolor.Registrator` object.
 
         Parameters
         ----------
@@ -341,7 +341,7 @@ class Tracker:
             Maximum frame number to consider. Useful if beads defocused in
             later frames. If `None` use all frames.
         params
-            Passed to :py:meth:`channel_reg.Registrator.determine_parameters`.
+            Passed to :py:meth:`multicolor.Registrator.determine_parameters`.
 
         Returns
         -------
@@ -364,7 +364,7 @@ class Tracker:
                                         **locator.options)
                 locs[chan].append(lo)
         label.layout = ipywidgets.Layout(display="none")
-        cc = channel_reg.Registrator(locs["donor"], locs["acceptor"])
+        cc = multicolor.Registrator(locs["donor"], locs["acceptor"])
         cc.determine_parameters(**params or {})
         self.tracker.registrator = cc
 
