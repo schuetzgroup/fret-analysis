@@ -356,17 +356,22 @@ class Backend(QtCore.QObject):
                     ds = self.datasets.get(i, "dataset")
 
                     loaded = s.get(h5_key)
-                    loaded["filter", "track_len"] = 0
-                    loaded["filter", "manual"] = -1
+                    filt_arr = np.full((len(loaded), 2), -1)
+                    idx_lvl_0 = loaded.index.get_level_values(0)
                     for j in range(ds.rowCount()):
                         pList = ds.get(j, "particles")
                         f = ds.get(j, "key")
                         p = loaded.loc[f, ("fret", "particle")]
                         filt = pList.filterTable.loc[p]
-                        loaded.loc[f, ("filter", "track_len")] = \
-                            filt["track_len"].to_numpy()
-                        loaded.loc[f, ("filter", "manual")] = \
-                            filt["manual"].to_numpy()
+                        # Cannot use
+                        # loaded.loc[f, ("filter", "track_len")] = \
+                        #     filt["track_len"].to_numpy()
+                        # as this does not work if f is a tuple
+                        idx_mask = idx_lvl_0 == f
+                        filt_arr[idx_mask, 0] = filt["track_len"].to_numpy()
+                        filt_arr[idx_mask, 1] = filt["manual"].to_numpy()
+                    loaded["filter", "track_len"] = filt_arr[:, 0]
+                    loaded["filter", "manual"] = filt_arr[:, 1]
                     # Categorical exc_type does not allow for storing in fixed
                     # format while multiindex for both rows and columns does
                     # not work with table format…
