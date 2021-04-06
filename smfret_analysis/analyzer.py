@@ -23,7 +23,8 @@ import numpy as np
 import pandas as pd
 import scipy.stats
 
-from sdt import changepoint, flatfield, fret, image, nbui, plot, roi
+from sdt import (changepoint, flatfield, fret, image, multicolor, nbui, plot,
+                 roi)
 
 from .tracker import Tracker
 from .version import output_version
@@ -36,8 +37,8 @@ class Analyzer:
     """
     rois: Dict[str, roi.ROI]
     """channel name -> ROI"""
-    excitation_seq: np.ndarray
-    """Array of characters describing the excitation sequence."""
+    frame_selector: multicolor.FrameSelector
+    """Select frames of different excitation types"""
     analyzers: Dict[str, fret.SmFRETAnalyzer]
     """dataset key -> analyzer class instance"""
     sources: Dict[str, Dict]
@@ -62,7 +63,7 @@ class Analyzer:
         cfg = Tracker.load_data(file_prefix, loc=False)
 
         self.rois = cfg["rois"]
-        self.excitation_seq = cfg["tracker"].excitation_seq
+        self.frame_selector = cfg["tracker"].frame_selector
         self.analyzers = {k: fret.SmFRETAnalyzer(v)
                           for k, v in cfg["track_data"].items()}
         self.special_analyzers = {}  # TODO
@@ -89,8 +90,9 @@ class Analyzer:
             excitation frame is used.
         """
         if frame is None:
-            frame_d = np.nonzero(self.excitation_seq == "d")[0][0]
-            frame_a = np.nonzero(self.excitation_seq == "a")[0]
+            e_seq = self.frame_selector.eval_seq(-1)
+            frame_d = np.nonzero(e_seq == "d")[0][0]
+            frame_a = np.nonzero(e_seq == "a")[0]
             # If there was no acceptor excitation…
             frame_a = frame_a[0] if frame_a.size else -1
         else:
@@ -107,8 +109,7 @@ class Analyzer:
                 elif key[0] == "a":
                     if frame is None:
                         try:
-                            frame_a = np.nonzero(
-                                self.excitation_seq == "a")[0][0]
+                            frame_a = np.nonzero(e_seq == "a")[0][0]
                         except IndexError:
                             raise ValueError(
                                 'excitation_seq does not contain "a".')
@@ -810,32 +811,41 @@ class Analyzer:
             thresh_algorithm = getattr(image, thresh_algorithm + "_thresh")
 
         for k in keys:
-            ana = self.analyzers[k]
-            files = np.unique(ana.tracks.index.levels[0])
+            # TODO: maybe move this to sdt-python?
+            ana_ = self.analyzers[k]
+            files = np.unique(
+                ana_.tracks.index.remove_unused_levels().levels[0])
 
-            masks = []
+            c_frames = self.frame_selector.find_other_frames(
+                int(ana_.tracks["donor", "frame"].max()) + 1,
+                "da", "c", "previous")
+            c_frames = self.frame_selector.renumber_frames(c_frames, "c")
+            # map frame no w.r.t. "da" -> frame no w.r.t "c"
+            c_frames = pd.Series(c_frames)
+            c_frames.index = self.frame_selector.renumber_frames(
+                c_frames.index, "da", restore=True)
+
+            filtered_tracks = []
             for f in files:
                 ci = self.cell_images[f]
+                ci_mask = [roi.MaskROI(thresh_algorithm(c, **kwargs))
+                        for c in ci]
 
-                # Get frame numbers of all cell images
-                c_pos = np.nonzero(self.excitation_seq == "c")[0]
-                n_rep = math.ceil(len(ci) / len(c_pos))
+                t = ana_.tracks.loc[f].copy()
+                t["__tmp_mask_idx__"] = c_frames[t["donor", "frame"]
+                                                 ].to_numpy()
 
-                all_c_pos = np.empty(n_rep * len(c_pos), dtype=int)
-                for i in range(n_rep):
-                    all_c_pos[i * len(c_pos):(i + 1) * len(c_pos)] = \
-                        i * len(self.excitation_seq) + c_pos
-                all_c_pos = all_c_pos[:len(ci)]
+                def image_mask(d):
+                    i = d["__tmp_mask_idx__"].iloc[0]
+                    return ci_mask[i](d, columns={
+                        "coords": [("donor", c)
+                                for c in ana_.columns["coords"]]})
 
-                # Apply each cell mask to all frames from the time of its
-                # recording to the recording of the next cell image
-                for i, (start, stop) in enumerate(zip(
-                        all_c_pos, itertools.chain(all_c_pos[1:], [None]))):
-                    masks.append({"key": f,
-                                  "mask": thresh_algorithm(ci[i], **kwargs),
-                                  "start": start,
-                                  "stop": stop})
-            ana.image_mask(masks, channel="donor")
+                filt = t.groupby("__tmp_mask_idx__", group_keys=False
+                                 ).apply(image_mask)
+                filt.drop("__tmp_mask_idx__", axis=1, inplace=True, level=0)
+                filtered_tracks.append(filt)
+            ana_.tracks = pd.concat(filtered_tracks, keys=files)
 
     def save(self, file_prefix: str = "filtered"):
         """Save results to disk
