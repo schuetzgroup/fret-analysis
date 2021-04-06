@@ -29,9 +29,9 @@ please [cite](https://doi.org/10.5281/zenodo.4604567) the software.
 
 ## Requirements
 
-- Python >= 3.6
+- Python >= 3.7
 - Jupyter Notebook or Lab
-- sdt-python >= 15.2
+- sdt-python >= 16.0.2
 - numpy
 - scipy
 - pandas
