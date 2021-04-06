@@ -142,7 +142,7 @@ class AcceptorLocator(FRETLocator):
         super().__init__(tracker, "acceptor")
 
     def _make_image_sequence(self, don, acc):
-        return self._tracker.tracker.frame_selector(acc, "a")
+        return self._tracker.tracker.frame_selector.select(acc, "a")
 
 
 class _ChannelSplitter(ipywidgets.VBox):
@@ -416,7 +416,7 @@ class Tracker:
         """
         don_fr_corr = self.tracker.registrator(don_fr, channel=1, cval=np.mean)
         s = _img_sum(don_fr_corr, acc_fr)
-        return self.tracker.frame_selector(s, "d")
+        return self.tracker.frame_selector.select(s, "d")
 
     def set_loc_opts(self):
         don_loc = DonorLocator(self)
@@ -454,7 +454,8 @@ class Tracker:
                 lo = self.locators["donor"].batch_func(
                     don_fr, **self.locators["donor"].options)
 
-                acc_fr = self.tracker.frame_selector(im_seq["acceptor"], "a")
+                acc_fr = self.tracker.frame_selector.select(im_seq["acceptor"],
+                                                            "a")
                 if len(acc_fr):
                     lo_a = self.locators["acceptor"].batch_func(
                         acc_fr, **self.locators["acceptor"].options)
@@ -612,7 +613,8 @@ class Tracker:
         for k, files in self.sources.items():
             for f in files:
                 im_seq, opened = self._open_image_sequence(f)
-                cell_fr = self.tracker.frame_selector(im_seq[channel], key)
+                cell_fr = self.tracker.frame_selector.select(im_seq[channel],
+                                                             key)
                 self.cell_images[f] = np.array(cell_fr)
                 for o in opened:
                     o.close()
