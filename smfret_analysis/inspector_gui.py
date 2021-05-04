@@ -133,11 +133,12 @@ class ParticleList(gui.ListModel):
 
     @smData.setter
     def smData(self, t):
-        t = t[t["fret", "exc_type"] == "d"].copy()
-        rn = self._frameSel.renumber_frames(t["donor", "frame"], "d")
-        t["donor", "frame"] = t["acceptor", "frame"] = rn
-        self._smData = t
+        if len(t):
+            t = t[t["fret", "exc_type"] == "d"].copy()
+            rn = self._frameSel.renumber_frames(t["donor", "frame"], "d")
+            t["donor", "frame"] = t["acceptor", "frame"] = rn
 
+        self._smData = t
         ap = np.sort(t["fret", "particle"].unique())
         self._filterTable = pd.DataFrame(
             {"track_len": np.zeros(len(ap), dtype=int),
@@ -320,7 +321,17 @@ class Backend(QtCore.QObject):
                     trcKey = tuple(files)
                 pList = ParticleList(ds)
                 pList.excitationSeq = ds.excitationSeq
-                pTrc = trc.loc[trcKey].copy()
+                try:
+                    pTrc = trc.loc[trcKey].copy()
+                except KeyError:
+                    mi = pd.MultiIndex.from_tuples(
+                        [(c, col)
+                         for c in ("donor", "acceptor")
+                         for col in ("x", "y", "frame", "mass")] +
+                        [("fret", col) for col in ("particle", "a_mass",
+                                                   "eff_app", "stoi_app",
+                                                   "exc_type")])
+                    pTrc = pd.DataFrame(columns=mi)
                 pList.smData = pTrc
                 ft = pList.filterTable
                 for c in "track_len", "manual":
@@ -365,7 +376,10 @@ class Backend(QtCore.QObject):
                     for j in range(ds.rowCount()):
                         pList = ds.get(j, "particles")
                         f = ds.get(j, "key")
-                        p = loaded.loc[f, ("fret", "particle")]
+                        try:
+                            p = loaded.loc[f, ("fret", "particle")]
+                        except KeyError:
+                            continue
                         filt = pList.filterTable.loc[p]
                         # Cannot use
                         # loaded.loc[f, ("filter", "track_len")] = \
