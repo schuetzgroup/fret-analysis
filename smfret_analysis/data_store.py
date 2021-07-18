@@ -58,14 +58,11 @@ class DataStore:
         **data
             Data to add to class instance as attributes
         """
-        self.localizations = {}
-        self.tracks = {}
-        self.flatfield = {}
-        self.segment_images = {}
-        self.data_dir = Path(data.pop("data_dir", ""))
+        if "data_dir" in data:
+            self.data_dir = Path(data.pop("data_dir"))
         self.__dict__.update(data)
 
-    def save(self, file_prefix: str = "tracking", file_mode: str = "w"):
+    def save(self, file_prefix: str = "tracking", mode: str = "write"):
         """Save data to disk
 
         This will save attributes to disk.
@@ -76,41 +73,58 @@ class DataStore:
             Common file_prefix for all files written by this method. It will be
             suffixed by the output format version (v{version}) and file
             extensions corresponding to what is saved in each file.
-        file_mode
-            Use "w" to delete previously existing HDF5 files (which contain
-            localization and tracking data) and write a new one. As a result,
-            only the current data will end up in the file. Use "a" for
-            appending. In this case, all data with keys that are present
-            in :py:attr:`localizations` or :py:attr:`tracks` will be
-            overwritten, but other data remains in the files.
+        mode
+            Use "write" to delete previously existing files (which contain
+            localization and tracking data) and write a new ones. As a result,
+            only the current data will end up in the file. Use "update" to
+            add or modify data without deleting anything not present in this
+            instance.
             """
         outfile = Path(f"{file_prefix}-v014")
         data = self.__dict__.copy()
+        file_mode = "w" if mode == "write" else "a"
 
         with warnings.catch_warnings():
             import tables
             warnings.simplefilter("ignore", tables.NaturalNameWarning)
 
             with pd.HDFStore(outfile.with_suffix(".loc.h5"), file_mode) as s:
-                for key, loc in data.pop("localizations").items():
+                for key, loc in data.pop("localizations", {}).items():
                     s.put(key, loc)
             with pd.HDFStore(outfile.with_suffix(".tracks.h5"),
                              file_mode) as s:
-                for key, trc in data.pop("tracks").items():
+                for key, trc in data.pop("tracks", {}).items():
                     # Categorical exc_type does not allow for storing in fixed
                     # format while multiindex for both rows and columns does
                     # not work with table format…
                     s.put(key, trc.astype({("fret", "exc_type"): str}))
-        seg = {}
-        for k, v in data.pop("segment_images").items():
-            for k2, v2 in v.items():
-                seg[f"{k}/{k2}"] = v2
-        np.savez_compressed(outfile.with_suffix(".seg_img.npz"), **seg)
-        for k, ff in data.pop("flatfield").items():
-            ff.save(outfile.with_suffix(f".flat_{k}.npz"))
-        data["data_dir"] = str(data["data_dir"])
+
+        if mode == "write":
+            old = {}
+            seg = {}
+        else:
+            old = self.load(file_prefix, loc=False, tracks=False,
+                            segment_images="segment_images" in data,
+                            flatfield=False).__dict__.copy()
+            seg = old.pop("segment_images", {})
+
+        if "segment_images" in data:
+            for k, v in data.pop("segment_images").items():
+                for k2, v2 in v.items():
+                    seg[f"{k}/{k2}"] = v2
+            np.savez_compressed(outfile.with_suffix(".seg_img.npz"), **seg)
+        if "flatfield" in data:
+            if mode == "write":
+                for f, _ in io.get_files(
+                        fr"^{outfile}\.flat_([\w\s-]+)\.npz$"):
+                    Path(f).unlink()
+            for k, ff in data.pop("flatfield").items():
+                ff.save(outfile.with_suffix(f".flat_{k}.npz"))
+        old.update(data)
+        if "data_dir" in old:
+            old["data_dir"] = str(old["data_dir"])
         with outfile.with_suffix(".yaml").open("w") as f:
-            io.yaml.safe_dump(data, f)
+            io.yaml.safe_dump(old, f)
 
     @classmethod
     def load(cls, file_prefix: str = "tracking", loc: bool = True,
@@ -197,11 +211,6 @@ class DataStore:
         ret["segment_images"] = defaultdict(dict)
         ret["flatfield"] = {}
 
-        for src in ret["sources"], ret["special_sources"]:
-            for k, files in src.items():
-                src[k] = {i: tuple(f) if isinstance(f, list) else f
-                          for i, f in enumerate(files)}
-
         all_src = {**ret["sources"], **ret["special_sources"]}
 
         do_load = []
@@ -286,24 +295,16 @@ class DataStore:
         with infile.with_suffix(".yaml").open() as f:
             ret = io.yaml.safe_load(f)
 
-        ret["data_dir"] = Path(ret.get("data_dir", ""))
-        ret["localizations"] = {}
-        ret["tracks"] = {}
-        ret["segment_images"] = defaultdict(dict)
-        ret["flatfield"] = {}
-
-        # Restore file tuples which were converted to lists by saving to YAML
-        for src in ret["sources"], ret["special_sources"]:
-            for k, files in src.items():
-                for fid, f in files.items():
-                    if isinstance(f, list):
-                        files[fid] = tuple(f)
+        if "data_dir" in ret:
+            ret["data_dir"] = Path(ret["data_dir"])
 
         if loc:
+            ret["localizations"] = {}
             with pd.HDFStore(infile.with_suffix(".loc.h5"), "r") as s:
                 for k in s.keys():
                     ret["localizations"][k[1:]] = s.get(k)
         if tracks:
+            ret["tracks"] = {}
             with pd.HDFStore(infile.with_suffix(".tracks.h5"), "r") as s:
                 for k in s.keys():
                     loaded = s.get(k)
@@ -312,6 +313,7 @@ class DataStore:
                     ret["tracks"][k[1:]] = loaded.astype(
                         {("fret", "exc_type"): "category"})
         if segment_images:
+            ret["segment_images"] = defaultdict(dict)
             seg_img_file = infile.with_suffix(".seg_img.npz")
             try:
                 with np.load(seg_img_file) as data:
@@ -319,12 +321,13 @@ class DataStore:
                 for k, v in ci.items():
                     split_idx = k.rfind("/")
                     k1 = k[:split_idx]
-                    k2 = k[split_idx+1:]
+                    k2 = int(k[split_idx+1:])
                     ret["segment_images"][k1][k2] = v
             except Exception as e:
                 warnings.warn("Could not load segmentation images from file "
                               f"\"{str(seg_img_file)}\" ({e}).")
         if flatfield:
+            ret["flatfield"] = {}
             flatfield_glob = str(infile.with_suffix(".flat_*.npz"))
             key_re = re.compile(r"^\.flat_([\w\s-]+)")
             for p in Path().glob(flatfield_glob):
