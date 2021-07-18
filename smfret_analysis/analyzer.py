@@ -3,18 +3,13 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """Provide :py:class:`Analyzer` as a Jupyter notebook UI for smFRET analysis"""
-import collections
 from io import BytesIO
-import itertools
-import math
-from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Sequence, Union
+from typing import Any, Callable, Dict, Iterable, Optional, Sequence, Union
 try:
     from typing import Literal
 except ImportError:
     # Python < 3.8
     from .typing_extensions import Literal
-import warnings
 
 import ipywidgets
 import matplotlib as mpl
@@ -23,11 +18,9 @@ import numpy as np
 import pandas as pd
 import scipy.stats
 
-from sdt import (changepoint, flatfield, fret, image, multicolor, nbui, plot,
-                 roi)
+from sdt import changepoint, flatfield, fret, image, multicolor, nbui, roi
 
-from .tracker import Tracker
-from .version import output_version
+from .data_store import DataStore
 
 
 class Analyzer:
@@ -46,7 +39,7 @@ class Analyzer:
     mapping "files" -> list of file names, "cells" -> bool as passed to
     :py:meth:`Tracker.add_dataset`.
     """
-    cell_images: Dict[str, np.ndarray]
+    segment_images: Dict[str, Dict[str, np.ndarray]]
     """file name -> 3D array where the first index specifies which of possible
     multiple images to use.
     """
@@ -60,23 +53,23 @@ class Analyzer:
             Prefix for :py:class:`Tracker` save files to load. Same as
             ``file_prefix`` argument passed to :py:meth:`Tracker.save`.
         """
-        cfg = Tracker.load_data(file_prefix, loc=False)
+        ds = DataStore.load(file_prefix, loc=False)
 
-        self.rois = cfg["rois"]
-        self.frame_selector = cfg["tracker"].frame_selector
+        self.rois = ds.rois
+        self.frame_selector = ds.tracker.frame_selector
         self.analyzers = {k: fret.SmFRETAnalyzer(v)
-                          for k, v in cfg["track_data"].items()}
+                          for k, v in ds.tracks.items()}
         self.special_analyzers = {}  # TODO
-        self.sources = cfg["sources"]
-        self.cell_images = cfg["cell_images"]
-        self.flatfield = cfg["flatfield"]
+        self.sources = ds.sources
+        self.segment_images = ds.segment_images
+        self.flatfield = ds.flatfield
 
         self._segment_fig = None
         self._brightness_fig = None
         self._thresholder = None
         self._beam_shape_fig = None
         self._beam_shape_artists = [None, None]
-        self._beta_population_fig = None
+        self._population_fig = None
         self._eff_stoi_fig = None
 
     def present_at_start(self, frame: Optional[int] = None):
@@ -174,7 +167,7 @@ class Analyzer:
         """
         mask = self.flatfield[channel].corr_img * 100 > thresh
         for a in self.analyzers.values():
-            a.image_mask(mask, channel)
+            a.image_mask(mask, channel, reason="beam_shape")
 
     def flatfield_correction(self):
         """Apply flatfield correction to brightness data
@@ -225,12 +218,13 @@ class Analyzer:
                                     description="dataset")
 
         def change_dataset(key=None):
-            trc = self.analyzers[d_sel.value].tracks
+            trc = self.analyzers[d_sel.value].apply_filters()
+            nan_mask = (np.isfinite(trc["fret", "a_mass"]) &
+                        np.isfinite(trc["fret", "d_mass"]))
+            good_p = sorted(trc.loc[nan_mask, ("fret", "particle")].unique())
             state["id"] = d_sel.value
             state["trc"] = trc
-            state["pnos"] = sorted(trc["fret", "particle"].unique())
-            state["files"] = \
-                trc.index.remove_unused_levels().levels[0].unique()
+            state["pnos"] = good_p
 
             callback()
 
@@ -239,7 +233,7 @@ class Analyzer:
 
         return d_sel
 
-    def find_segment_options(self) -> ipywidgets.Widget:
+    def find_changepoint_options(self) -> ipywidgets.Widget:
         """Find options for :py:meth:`segment_mass`
 
         Returns
@@ -298,8 +292,8 @@ class Analyzer:
             ax_eff.set_ylim(-0.05, 1.05)
             ax_hn.set_ylim(-0.05, 1.05)
 
-            ax_dm.set_title("d_mass")
-            ax_am.set_title("a_mass")
+            ax_dm.set_title("donor ex.")
+            ax_am.set_title("acceptor ex.")
             ax_eff.set_title("app. eff")
 
             self._segment_fig.tight_layout()
@@ -314,7 +308,12 @@ class Analyzer:
         return ipywidgets.VBox([d_sel, p_sel, pen_d_sel, pen_a_sel,
                                 self._segment_fig.canvas, p_label])
 
-    def segment_mass(self, channel: Literal["donor", "acceptor"], **kwargs):
+    def mass_changepoints(self, channel: Literal["donor", "acceptor"],
+                          stats: Union[Callable, str,
+                                       Iterable[Union[Callable, str]]
+                                       ] = "median",
+                          stat_margin: int = 1,
+                          **kwargs):
         """Segment tracks by changepoint detection in brightness time traces
 
         This adds a column with segment numbers for each track.
@@ -324,18 +323,35 @@ class Analyzer:
         channel
             Whether to perform changepoint detection in the donor or acceptor
             emission channel.
+        stats
+            Statistics to calculate for each track segment. For each entry
+            ``s``, a column named ``"{chan}_seg_{s}"`` is appendend, where
+            ``chan`` is ``d`` for donor and ``a`` for acceptor.
+            ``s`` can be the name of a numpy function or a callable returning
+            a statistic, such as :py:func:`numpy.mean`.
+        stat_margin
+            Number of data points around a changepoint to exclude from
+            statistics calculation. This can prevent bias in the statistics due
+            to recording a bleaching event in progress.
         **kwargs
             Arguments passed to the changepoint detection algorithm
             (:py:meth:`sdt.changepoint.Pelt.find_changepoints`).
 
         See also
         --------
-        fret.SmFretAnalyzer.segment_mass
+        fret.SmFretAnalyzer.mass_changepoints
         """
         for a in self.analyzers.values():
-            a.segment_mass(channel, **kwargs)
+            a.mass_changepoints(channel, stats, stat_margin, **kwargs)
 
-    def filter_bleach_step(self, donor_thresh: float, acceptor_thresh: float):
+    def set_bleach_thresh(self, donor, acceptor):
+        for a in self.analyzers.values():
+            a.bleach_thresh = (donor, acceptor)
+
+    def filter_bleach_step(self,
+                           condition: Literal[
+                               "donor", "acceptor", "donor or acceptor",
+                               "no partial"] = "donor or acceptor"):
         """Remove tracks that do not show expected bleaching steps
 
         Acceptor must bleach in a single step, while donor must not show more
@@ -343,17 +359,25 @@ class Analyzer:
 
         Parameters
         ----------
-        donor_thresh, acceptor_thresh
-            Consider the donor / acceptor bleached if the segment median is
-            below donor_thresh/acceptor_thresh.
+        condition
+            If ``"donor"``, accept only tracks where the donor bleaches in a
+            single step and the acceptor shows either no bleach step or
+            completely bleaches in a single step.
+            Likewise, ``"acceptor"`` will accept only tracks where the acceptor
+            bleaches fully in one step and the donor shows no partial
+            bleaching.
+            ``donor or acceptor`` requires that one channel bleaches in a
+            single step while the other either also bleaches in one step or not
+            at all (no partial bleaching).
+            If ``"no partial"``, there may be no partial bleaching, but
+            bleaching is not required.
 
         See also
         --------
         fret.SmFretAnalyzer.bleach_step
         """
-        for k, v in self.sources.items():
-            a = self.analyzers[k]
-            a.bleach_step(donor_thresh, acceptor_thresh, truncate=False)
+        for a in self.analyzers.values():
+            a.bleach_step(condition)
 
     def set_leakage(self, leakage: float):
         r"""Set the leakage correction factor for all datasets
@@ -398,7 +422,7 @@ class Analyzer:
     # TODO: Move to sdt package
     def calc_leakage_from_bleached(
             self, datasets: Union[str, Sequence[str], None] = None,
-            print_summary: bool = False):
+            stat: str = "median", print_summary: bool = True):
         """Calculate leakage correction factor from bleached acceptor traces
 
         This takes those parts of traces where the acceptor is bleached, but
@@ -408,6 +432,10 @@ class Analyzer:
         ----------
         datasets
             dataset(s) to use. If `None`, use all.
+        stat
+            Statistic to use to determine bleaching steps. Has to be one that
+            was passed to via ``stats`` parameter to
+            :py:meth:`mass_changepoints`.
         print_summary
             Print number of datapoints and result.
 
@@ -424,23 +452,29 @@ class Analyzer:
         effs = []
         for d in datasets:
             trc = self.analyzers[d].tracks
+            bleach_tresh = self.analyzers[d].bleach_thresh[1]
             # search for donor excitation frames where acceptor is bleached
             # but donor isn't
             sel = ((trc["fret", "exc_type"] == "d") &
                    (trc["fret", "has_neighbor"] == 0) &
-                   (trc["fret", "a_seg"] == 1) &
+                   (trc["fret", "a_seg"] > 1) &
+                   (trc["fret", f"a_seg_{stat}"] < bleach_tresh) &
                    (trc["fret", "d_seg"] == 0))
             effs.append(trc.loc[sel, ("fret", "eff_app")].values)
         effs = np.concatenate(effs)
 
-        n_data = len(effs)
         m_eff = np.mean(effs)
         leakage = m_eff / (1 - m_eff)
 
         self.set_leakage(leakage)
 
         if print_summary:
-            print(f"leakage: {leakage:.4f} (from {n_data} datapoints)")
+            n_data = len(effs)
+            e_eff = np.std(effs, ddof=1) / np.sqrt(n_data)  # SEM
+            err = 1 / (1 - m_eff)  # derivative of x / (1-x) is 1 / (1-x)**2
+            err = err * err * e_eff
+            print(f"leakage: {leakage:.4f} ± {err:.4f} (from {n_data} "
+                  "datapoints)")
 
     def set_direct_excitation(self, dir_exc: float):
         r"""Set the direct (cross-) excitation factor for all datasets
@@ -485,7 +519,7 @@ class Analyzer:
     # TODO: Move to sdt package
     def calc_direct_excitation_from_bleached(
             self, datasets: Union[str, Sequence[str], None] = None,
-            print_summary: bool = False):
+            stat: str = "median", print_summary: bool = True):
         """Calculate dir. exc. correction factor from bleached donor traces
 
         This takes those parts of traces where the donor is bleached, but
@@ -495,6 +529,10 @@ class Analyzer:
         ----------
         datasets
             dataset(s) to use. If `None`, use all.
+        stat
+            Statistic to use to determine bleaching steps. Has to be one that
+            was passed to via ``stats`` parameter to
+            :py:meth:`mass_changepoints`.
         print_summary
             Print number of datapoints and result.
 
@@ -511,23 +549,29 @@ class Analyzer:
         stois = []
         for d in datasets:
             trc = self.analyzers[d].tracks
+            bleach_tresh = self.analyzers[d].bleach_thresh[0]
             # search for donor excitation frames where donor is bleached
             # but acceptor isn't
             sel = ((trc["fret", "exc_type"] == "d") &
                    (trc["fret", "has_neighbor"] == 0) &
                    (trc["fret", "a_seg"] == 0) &
-                   (trc["fret", "d_seg"] == 1))
+                   (trc["fret", "d_seg"] > 0) &
+                   (trc["fret", f"d_seg_{stat}"] < bleach_tresh))
             stois.append(trc.loc[sel, ("fret", "stoi_app")].values)
         stois = np.concatenate(stois)
 
-        n_data = len(stois)
         m_stoi = np.mean(stois)
         dir_exc = m_stoi / (1 - m_stoi)
 
         self.set_direct_excitation(dir_exc)
 
         if print_summary:
-            print(f"direct exc.: {dir_exc:.4f} (from {n_data} datapoints)")
+            n_data = len(stois)
+            e_stoi = np.std(stois, ddof=1) / np.sqrt(n_data)  # SEM
+            err = 1 / (1 - m_stoi)  # derivative of x / (1-x) is 1 / (1-x)**2
+            err = err * err * e_stoi
+            print(f"direct exc.: {dir_exc:.4f} ± {err:.4f} (from {n_data} "
+                  "datapoints)")
 
     def set_detection_eff(self, eff: float):
         r"""Set the detection efficiency factor for all datasets
@@ -547,7 +591,7 @@ class Analyzer:
 
     def calc_detection_eff(self, min_part_len: int = 5,
                            how: Union[Callable[[np.array], float],
-                                      Literal["individual"]] = "individual",
+                                      Literal["individual"]] = np.nanmedian,
                            aggregate: Literal["dataset", "all"] = "dataset",
                            dataset: Optional[str] = None):
         r"""Calculate detection efficieny correction factor
@@ -624,7 +668,7 @@ class Analyzer:
         for a in self.analyzers.values():
             a.excitation_eff = eff
 
-    def find_excitation_eff_component(self) -> ipywidgets.Widget:
+    def find_subpopulations(self) -> ipywidgets.Widget:
         """Interactively select component for calculation of excitation eff.
 
         The excitation efficiency factor is computer from data with known 1:1
@@ -640,40 +684,40 @@ class Analyzer:
         --------
         calc_excitation_eff
         """
-        if self._beta_population_fig is None:
-            self._beta_population_fig, _ = plt.subplots()
+        if self._population_fig is None:
+            self._population_fig = plt.subplots()[0]
 
         state = {}
 
         n_comp_sel = ipywidgets.IntText(description="components", value=1)
 
-        cmaps = ["viridis", "gray", "plasma", "jet"]
-
         def update(change=None):
             d = state["trc"]
-            d = d[d["fret", "a_seg"] == 0].copy()
-            split = fret.gaussian_mixture_split(d, n_comp_sel.value)
+            d = d[(d["fret", "a_seg"] == 0) &
+                  (d["fret", "d_seg"] == 0) &
+                  np.isfinite(d["fret", "eff_app"]) &
+                  np.isfinite(d["fret", "stoi_app"])].copy()
+            labels = fret.gaussian_mixture_split(d, n_comp_sel.value)
 
-            ax = self._beta_population_fig.axes[0]
+            ax = self._population_fig.axes[0]
             ax.cla()
-            for v, cm in zip(split, itertools.cycle(cmaps)):
-                sel = (d["fret", "particle"].isin(v) &
-                       np.isfinite(d["fret", "eff_app"]) &
-                       np.isfinite(d["fret", "stoi_app"]))
-                plot.density_scatter(d.loc[sel, ("fret", "eff_app")],
-                                     d.loc[sel, ("fret", "stoi_app")],
-                                     marker=".", label=f"{len(v)}", ax=ax,
-                                     cmap=cm)
-            ax.legend(loc=0)
+            for lab in range(n_comp_sel.value):
+                dl = d[labels == lab]
+                sel = (np.isfinite(dl["fret", "eff_app"]) &
+                       np.isfinite(dl["fret", "stoi_app"]))
+                ax.scatter(dl.loc[sel, ("fret", "eff_app")],
+                           dl.loc[sel, ("fret", "stoi_app")],
+                           marker=".", label=str(lab), alpha=0.6)
+            ax.legend(loc=0, title="index")
             ax.set_xlabel("apparent eff.")
             ax.set_ylabel("apparent stoi.")
-            self._beta_population_fig.canvas.draw()
+            self._population_fig.canvas.draw()
 
         d_sel = self._make_dataset_selector(state, update)
         n_comp_sel.observe(update, "value")
 
         return ipywidgets.VBox([d_sel, n_comp_sel,
-                                self._beta_population_fig.canvas])
+                                self._population_fig.canvas])
 
     def calc_excitation_eff(self, dataset: str, n_components: int = 1,
                             component: int = 0):
@@ -718,7 +762,7 @@ class Analyzer:
         for a in self.analyzers.values():
             a.fret_correction(*args, **kwargs)
 
-    def query(self, expr: str, mi_sep: str = "_"):
+    def query(self, expr: str, mi_sep: str = "_", reason: str = "query"):
         """Filter localizations
 
         Use :py:meth:`sdt.fret.SmFretAnalyzer.query` to select only
@@ -739,10 +783,11 @@ class Analyzer:
         sdt.fret.SmFretAnalyzer.query
         """
         for a in self.analyzers.values():
-            a.query(expr, mi_sep)
+            a.query(expr, mi_sep, reason)
 
     def query_particles(self, expr: str, min_abs: int = 1,
-                        min_rel: float = 0.0, mi_sep: str = "_"):
+                        min_rel: float = 0.0, mi_sep: str = "_",
+                        reason: str = "query_p"):
         """Filter tracks
 
         Use :py:meth:`sdt.fret.SmFretAnalyzer.query_particles` to select only
@@ -770,12 +815,12 @@ class Analyzer:
         sdt.fret.SmFretAnalyzer.query_particles
         """
         for a in self.analyzers.values():
-            a.query_particles(expr, min_abs, min_rel, mi_sep)
+            a.query_particles(expr, min_abs, min_rel, mi_sep, reason)
 
-    def find_cell_mask_params(self) -> nbui.Thresholder:
-        """UI for finding parameters for thresholding cell images
+    def find_segmentation_options(self) -> nbui.Thresholder:
+        """UI for finding parameters for segmenting images
 
-        Parameters can be passed to :py:meth:`apply_cell_masks`.
+        Parameters can be passed to :py:meth:`apply_segmentation`.
 
         Returns
         -------
@@ -784,23 +829,28 @@ class Analyzer:
         if self._thresholder is None:
             self._thresholder = nbui.Thresholder()
 
-        self._thresholder.image_selector.images = collections.OrderedDict(
-            [(k, v[0]) for k, v in self.cell_images.items()])
+        self._thresholder.image_selector.images = {
+            self.sources[did][fid]: v[0]
+            for did, dset in self.segment_images.items()
+            for fid, v in dset.items()}
 
         return self._thresholder
 
-    def apply_cell_masks(self, keys: Sequence[str],
-                         thresh_algorithm: str = "adaptive", **kwargs):
-        """Remove datapoints from non-cell-occupied regions
+    def apply_segmentation(self, keys: Sequence[str],
+                           thresh_algorithm: str = "adaptive",
+                           channel: str = "donor", **kwargs):
+        """Remove datapoints from regions not selected by segmentation
 
         Threshold cell images according to the parameters and use the resulting
-        mask to discard datapoints not underneath cells. This is applied only
-        to datasets which have ``special="cells"`` set.
+        mask to discard datapoints outside of thresholded regions.
 
         Parameters
         ----------
         keys
             Which datasets to apply cell masks to.
+        channel
+            If "donor", apply filter to donor coordinates. If "acceptor", apply
+            mask to acceptor coordinates.
         thresh_algorithm
             Use the ``thresh_algorithm + "_thresh"`` function from
             :py:mod:`sdt.image` for thresholding.
@@ -813,41 +863,34 @@ class Analyzer:
         for k in keys:
             # TODO: maybe move this to sdt-python?
             ana_ = self.analyzers[k]
-            files = np.unique(
+            fids = np.unique(
                 ana_.tracks.index.remove_unused_levels().levels[0])
 
+            max_frame = int(ana_.tracks["donor", "frame"].max()) + 1
             c_frames = self.frame_selector.find_other_frames(
-                int(ana_.tracks["donor", "frame"].max()) + 1,
-                "da", "c", "previous")
-            c_frames = self.frame_selector.renumber_frames(c_frames, "c")
-            # map frame no w.r.t. "da" -> frame no w.r.t "c"
-            c_frames = pd.Series(c_frames)
-            c_frames.index = self.frame_selector.renumber_frames(
-                c_frames.index, "da", restore=True)
+                max_frame, "da", "s", "previous")
+            c_frames = self.frame_selector.renumber_frames(c_frames, "s")
+            change_idx = np.nonzero(np.diff(c_frames))[0] + 1
+            if len(change_idx) > 0:
+                change_idx = self.frame_selector.renumber_frames(
+                    change_idx, "da", restore=True)
+            start_idx = np.empty(len(change_idx)+1, dtype=int)
+            start_idx[0] = 0
+            start_idx[1:] = change_idx
+            stop_idx = np.empty_like(start_idx)
+            stop_idx[:-1] = change_idx
+            stop_idx[-1] = max_frame
 
-            filtered_tracks = []
-            for f in files:
-                ci = self.cell_images[f]
-                ci_mask = [roi.MaskROI(thresh_algorithm(c, **kwargs))
-                        for c in ci]
+            masks = []
+            for f in fids:
+                ci = self.segment_images[k][f]
+                masks.extend(
+                    [{"key": f, "mask": thresh_algorithm(c, **kwargs),
+                      "start": s, "stop": e}
+                     for c, s, e in zip(ci, start_idx, stop_idx)])
+            ana_.image_mask(masks, channel, reason="image_seg")
 
-                t = ana_.tracks.loc[f].copy()
-                t["__tmp_mask_idx__"] = c_frames[t["donor", "frame"]
-                                                 ].to_numpy()
-
-                def image_mask(d):
-                    i = d["__tmp_mask_idx__"].iloc[0]
-                    return ci_mask[i](d, columns={
-                        "coords": [("donor", c)
-                                for c in ana_.columns["coords"]]})
-
-                filt = t.groupby("__tmp_mask_idx__", group_keys=False
-                                 ).apply(image_mask)
-                filt.drop("__tmp_mask_idx__", axis=1, inplace=True, level=0)
-                filtered_tracks.append(filt)
-            ana_.tracks = pd.concat(filtered_tracks, keys=files)
-
-    def save(self, file_prefix: str = "filtered"):
+    def save(self, file_prefix: str = "tracking"):
         """Save results to disk
 
         This will save filtered data to disk.
@@ -858,39 +901,8 @@ class Analyzer:
             Prefix for the file written by this method. It will be suffixed by
             the output format version (v{output_version}) and file extension.
         """
-        outfile = Path(f"{file_prefix}-v{output_version:03}")
-
-        with warnings.catch_warnings():
-            import tables
-            warnings.simplefilter("ignore", tables.NaturalNameWarning)
-
-            with pd.HDFStore(outfile.with_suffix(".h5")) as s:
-                for key, ana in self.analyzers.items():
-                    s.put(f"{key}_trc", ana.tracks.astype(
-                        {("fret", "exc_type"): str}))
-
-    @staticmethod
-    def load_data(file_prefix: str = "filtered") -> Dict[str, Any]:
-        """Load data to a dictionary
-
-        Parameters
-        ----------
-        file_prefix
-            Prefix used for saving via :py:meth:`save`.
-
-        Returns
-        -------
-            Dictionary of loaded data
-        """
-        ret = collections.OrderedDict()
-        infile = Path(f"{file_prefix}-v{output_version:03}.h5")
-        with pd.HDFStore(infile, "r") as s:
-            for k in s.keys():
-                if not k.endswith("_trc"):
-                    continue
-                key = k.lstrip("/")[:-4]
-                ret[key] = s[k].astype({("fret", "exc_type"): "category"})
-        return ret
+        DataStore(tracks={k: ana.tracks for k, ana in self.analyzers.items()}
+                  ).save(file_prefix, mode="update")
 
 
 class DensityPlots(ipywidgets.Box):
@@ -979,7 +991,7 @@ class DensityPlots(ipywidgets.Box):
                                       sharey=None if not ax else ax[0]))
 
         for d, a in zip(self._datasets, ax):
-            t = self._ana.analyzers[d].tracks
+            t = self._ana.analyzers[d].apply_filters()
             x = t[self._cols[0]].to_numpy()
             y = t[self._cols[1]].to_numpy()
 
