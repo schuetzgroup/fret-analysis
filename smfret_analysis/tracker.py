@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """Provide :py:class:`Tracker` as a Jupyter notebook UI for smFRET tracking"""
-import re
 import collections
+import contextlib
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Sequence, Union
 try:
@@ -22,11 +22,10 @@ import numpy as np
 import pandas as pd
 import pims
 
-from sdt import helper, io, image, multicolor, nbui, roi
+from sdt import fret, helper, io, image, multicolor, nbui, roi
 from sdt import flatfield as _flatfield  # avoid name clashes
-from sdt.fret import SmFRETTracker
 
-from .version import output_version
+from .data_store import DataStore
 
 
 @helper.pipeline(ancestor_count=2)
@@ -73,11 +72,11 @@ class Locator(ipywidgets.VBox):
     def _set_files(self, files):
         self._files = files
         opt_list = []
-        for f in files:
+        for k, f in files.items():
             if isinstance(f, dict):
-                opt_list.append(f"{f['donor']}, {f['acceptor']}")
+                opt_list.append((f"{f['donor']}, {f['acceptor']}", k))
             else:
-                opt_list.append(f)
+                opt_list.append((f, k))
         self._file_selector.options = opt_list
 
     def _file_changed(self, change=None):
@@ -175,10 +174,45 @@ class Tracker:
     can be disconnected and further filtering and analysis can be efficiently
     performed using the :py:class:`Analyzer` class.
     """
+    tracker: fret.SmFRETAnalyzer
+    """Provides tracking functionality"""
+    data_dir: Path
+    """All paths to source image files are relative to this"""
     rois: Dict[str, Union[roi.ROI, None]]
     """Map of channel name -> :py:class:`roi.ROI` instances (or `None`).
     Contains "donor" and "acceptor" keys.
     """
+    sources: Dict[str, Dict[int, Union[str, Sequence[str]]]]
+    """Map of dataset name (see :py:meth:`add_dataset`) -> file id -> source
+    image file name(s).
+    """
+    special_sources: Dict[str, Dict[int, Union[str, Sequence[str]]]]
+    """Map of dataset name (see :py:meth:`add_dataset`) -> file id -> source
+    image file name(s). This is for special purpose datasets. Allowed keys:
+    - ``"registration"`` (fiducial markers for image registration)
+    - ``"donor-profile"``, ``"acceptor-profile"`` (densly labeled samples for
+        determination of excitation intensity profiles)
+    - ``"donor-only"``, ``"acceptor-only"`` (samples for determination of
+        leakage and direct excitation correction factors, respectively)
+    """
+    loc_data: Dict[str, pd.DataFrame]
+    """Map of dataset name -> single-molecule localization data"""
+    special_loc_data: Dict[str, pd.DataFrame]
+    """Map of dataset name -> single-molecule localization data for
+    special-purpose data (donor-only, acceptor-only)
+    """
+    track_data: Dict[str, pd.DataFrame]
+    """Map of dataset name -> single-molecule tracking data"""
+    special_track_data: Dict[str, pd.DataFrame]
+    """Map of dataset name -> single-molecule tracking data for
+    special-purpose data (donor-only, acceptor-only)
+    """
+    segment_images: Dict[str, Dict[str, np.ndarray]]
+    """Map of dataset name -> file id -> image data for segmentation"""
+    flatfield: Dict[str, _flatfield.Corrector]
+    """Map of excitation channel name -> flatfield corrector instance"""
+    locators: Dict[str, nbui.Locator]
+    """Widgets for locating fiducials, donor and acceptor emission data"""
     def __init__(self, excitation_seq: str = "da",
                  data_dir: Union[str, Path] = ""):
         """Parameters
@@ -194,33 +228,20 @@ class Tracker:
             which is the current working directory.
         """
         self.rois = {"donor": None, "acceptor": None}
-
-        self.tracker = SmFRETTracker(excitation_seq)
-        """:py:class:`SmFretTracker` instance used for tracking"""
-        self.sources = collections.OrderedDict()
-        """dict of dataset name (see :py:meth:`add_dataset`) -> information
-        about source (image) files.
-        """
+        self.tracker = fret.SmFRETTracker(excitation_seq)
+        self.sources = {}
         self.special_sources = {}
-
-        self.loc_data = collections.OrderedDict()
-        """dict of dataset name -> single molecule localization data."""
-        self.track_data = collections.OrderedDict()
-        """dict of dataset name -> single molecule tracking data."""
-        self.cell_images = collections.OrderedDict()
-        """dict of dataset name -> cell images ("c" in excitation sequence)."""
-        self.flatfield = collections.OrderedDict()
-        """dict of channel name -> :py:class:`flatfield.Corrector` instances.
-        """
+        self.loc_data = {}
+        self.special_loc_data = {}
+        self.track_data = {}
+        self.special_track_data = {}
+        self.segment_images = {}
+        self.flatfield = {}
         self.data_dir = Path(data_dir)
-        """data directory root path"""
 
-        self.locators = collections.OrderedDict([
-            ("donor", nbui.Locator()), ("acceptor", nbui.Locator()),
-            ("reg_donor", nbui.Locator()), ("reg_acceptor", nbui.Locator())])
-        """:py:class:`nbui.Locator` instances for locating "beads", "donor"
-        emission data, "acceptor" emission data.
-        """
+        self.locators = {
+            "donor": nbui.Locator(), "acceptor": nbui.Locator(),
+            "reg_donor": nbui.Locator(), "reg_acceptor": nbui.Locator()}
         self.channel_splitter = nbui.ChannelSplitter()
         self.channel_splitter.channel_names = ("donor", "acceptor")
         self._channel_splitter_active = False
@@ -231,7 +252,7 @@ class Tracker:
         if acc_files_re is not None:
             acc_files = io.get_files(acc_files_re, self.data_dir)[0]
             files = list(zip(files, acc_files))
-        return files
+        return {i: f for i, f in enumerate(files)}
 
     def add_dataset(self, key: str, files_re: str,
                     acc_files_re: Optional[str] = None):
@@ -268,7 +289,8 @@ class Tracker:
             slashes as path separators.
         """
         self._splitter_active = False
-        files = [self.data_dir / f for f in self._get_files(files_re, None)]
+        files = [self.data_dir / f
+                 for f in self._get_files(files_re, None).values()]
         splt = _ChannelSplitter(self)
         splt.image_selector.images = files
         self.channel_splitter.image_display.auto_scale()
@@ -286,8 +308,9 @@ class Tracker:
             self.channel_splitter.rois
 
     def add_special_dataset(self,
-                            kind: Literal["registration", "acc-only",
-                                          "don-only"],
+                            kind: Literal["registration", "acceptor-profile",
+                                          "donor-profile", "donor-only",
+                                          "acceptor-only", "multi-state"],
                             files_re: str,
                             acc_files_re: Optional[str] = None):
         files = self._get_files(files_re, acc_files_re)
@@ -354,7 +377,8 @@ class Tracker:
         n_files = len(self.special_sources["registration"])
 
         locs = {"donor": [], "acceptor": []}
-        for n, img_file in enumerate(self.special_sources["registration"]):
+        for n, img_file in enumerate(
+                self.special_sources["registration"].values()):
             label.value = f"Locating beads (file {n+1}/{n_files})"
 
             im_seq, to_close = self._open_image_sequence(img_file)
@@ -443,8 +467,7 @@ class Tracker:
 
         for key, files in self.sources.items():
             ret = []
-            ret_keys = []
-            for i, f in enumerate(files):
+            for f in files.values():
                 label.value = f"Locating {f} ({cnt}/{num_files})"
                 cnt += 1
 
@@ -465,21 +488,14 @@ class Tracker:
 
                 for o in opened:
                     o.close()
-
-                if isinstance(f, tuple):
-                    # Wrap into another tuple to avoid having a MultiIndex with
-                    # three levels
-                    ret_keys.append((f,))
-                else:
-                    ret_keys.append(f)
-            self.loc_data[key] = pd.concat(ret, keys=ret_keys)
+            self.loc_data[key] = pd.concat(ret, keys=files.keys())
 
     def track(self, feat_radius: int = 4, bg_frame: int = 3,
               link_radius: float = 1.0, link_mem: int = 1, min_length: int = 4,
               bg_estimator: Union[Literal["mean", "median"],
                                   Callable[[np.array], float]] = "mean",
               image_filter: Optional[helper.Pipeline] =
-                  lambda i: image.gaussian_filter(i, 1),
+                  lambda i: image.gaussian_filter(i, 1),  # noqa: E127
               neighbor_radius: Optional[float] = None):
         """Link single-molecule localizations into trajectories
 
@@ -539,15 +555,14 @@ class Tracker:
 
         for key, files in self.sources.items():
             ret = []
-            ret_keys = []
             new_p = 0  # Particle ID unique across files
-            for f in files:
+            for fk, f in files.items():
                 label.value = f"Tracking {f} ({cnt}/{num_files})"
                 cnt += 1
 
                 loc = self.loc_data[key]
                 try:
-                    loc = loc.loc[f].copy()
+                    loc = loc.loc[fk].copy()
                 except KeyError:
                     # No localizations in this file
                     continue
@@ -583,41 +598,35 @@ class Tracker:
                     new_p += 1
                 ret.append(d)
 
-                if isinstance(f, tuple):
-                    # Wrap into another tuple to avoid having a MultiIndex with
-                    # three levels
-                    ret_keys.append((f,))
-                else:
-                    ret_keys.append(f)
-
                 for o in opened:
                     o.close()
+            self.track_data[key] = pd.concat(ret, keys=files.keys())
 
-            self.track_data[key] = pd.concat(ret, keys=ret_keys)
+    def extract_segment_images(self, key: str = "s", channel: str = "donor"):
+        """Get images for segmentation
 
-    def extract_cell_images(self, key: str = "c", channel: str = "donor"):
-        """Get cell images for thresholding
-
-        This extracts the images of cell contours for use with
-        :py:class:`Analyzer`. Images are copied to :py:attr:`cell_images`.
+        This extracts the images used for segmentation (e.g., cell outlines)
+        for use with :py:class:`Analyzer`. Images are copied to
+        :py:attr:`segment_images`.
 
         Parameters
         ----------
         key
             Character describing cell images in the excitation sequence
-            ``excitation_seq`` parameter to :py:meth:`__init__`. Defaults to
-            "c".
+            ``excitation_seq`` parameter to :py:meth:`__init__`.
         """
-        self.cell_images.clear()
+        self.segment_images.clear()
 
         for k, files in self.sources.items():
-            for f in files:
+            seg = {}
+            for fk, f in files.items():
                 im_seq, opened = self._open_image_sequence(f)
-                cell_fr = self.tracker.frame_selector.select(im_seq[channel],
-                                                             key)
-                self.cell_images[f] = np.array(cell_fr)
+                seg_fr = self.tracker.frame_selector.select(im_seq[channel],
+                                                            key)
+                seg[fk] = np.array(seg_fr)
                 for o in opened:
                     o.close()
+            self.segment_images[k] = seg
 
     def make_flatfield(self, dest: Literal["donor", "acceptor"],
                        src: Optional[Literal["donor", "acceptor"]] = None,
@@ -662,7 +671,7 @@ class Tracker:
         imgs = []
         all_opened = []
         try:
-            for f in self.special_sources[f"{src}-profile"]:
+            for f in self.special_sources[f"{src}-profile"].values():
                 im_seq, opened = self._open_image_sequence(f)
                 all_opened.extend(opened)
                 im = im_seq[src][frame]
@@ -714,7 +723,8 @@ class Tracker:
             keys = self.track_data.keys()
 
         if frame is None:
-            frame = self.tracker.excitation_frames[dest[0]][0]
+            e_seq = self.tracker.frame_selector.eval_seq(-1)
+            frame = np.nonzero(e_seq == dest[0])[0][0]
 
         data = []
         for k in keys:
@@ -759,129 +769,12 @@ class Tracker:
         loc_options = collections.OrderedDict(
             [(k, v.get_settings()) for k, v in self.locators.items()])
 
-        top = collections.OrderedDict(
-            tracker=self.tracker, rois=self.rois, loc_options=loc_options,
-            data_dir=str(self.data_dir), sources=self.sources,
-            special_sources=self.special_sources)
-        outfile = Path(f"{file_prefix}-v{output_version:03}")
-        with outfile.with_suffix(".yaml").open("w") as f:
-            io.yaml.safe_dump(top, f)
-
-        with warnings.catch_warnings():
-            import tables
-            warnings.simplefilter("ignore", tables.NaturalNameWarning)
-
-            with pd.HDFStore(outfile.with_suffix(".h5")) as s:
-                for key, loc in self.loc_data.items():
-                    s.put("{}_loc".format(key), loc)
-                for key, trc in self.track_data.items():
-                    # Categorical exc_type does not allow for storing in fixed
-                    # format while multiindex for both rows and columns does
-                    # not work with table format…
-                    s.put("{}_trc".format(key), trc.astype(
-                        {("fret", "exc_type"): str}))
-
-        cell_img_save = collections.OrderedDict()
-        for k, v in self.cell_images.items():
-            if isinstance(k, tuple):
-                new_k = "\n".join(k)
-            else:
-                new_k = k
-            cell_img_save[new_k] = v
-        np.savez_compressed(outfile.with_suffix(".cell_img.npz"),
-                            **cell_img_save)
-        for k, ff in self.flatfield.items():
-            ff.save(outfile.with_suffix(f".flat_{k}.npz"))
-
-    @staticmethod
-    def load_data(file_prefix: str = "tracking", loc: bool = True,
-                  tracks: bool = True, cell_images: bool = True,
-                  flatfield: bool = True) -> Dict:
-        """Load data to a dictionary
-
-        Parameters
-        ----------
-        file_prefix
-            Prefix used for saving via :py:meth:`save`. Defaults to "tracking".
-        loc
-            Whether to load localization data. Defaults to `True`.
-        tracks
-            Whether to load tracking data. Defaults to `True`.
-        cell_images
-            Whether to load cell images. Defaults to `True`.
-        flatfield
-            Whether to load flatfield corrections. Defaults to `True`.
-
-        Returns
-        -------
-            Dictionary of loaded data and settings.
-        """
-        infile = Path(f"{file_prefix}-v{output_version:03}")
-        with infile.with_suffix(".yaml").open() as f:
-            cfg = io.yaml.safe_load(f)
-
-        ret = {"rois": cfg["rois"], "data_dir": Path(cfg.get("data_dir", "")),
-               "sources": cfg["sources"],
-               "special_sources": cfg["special_sources"],
-               "loc_options": cfg["loc_options"], "tracker": cfg["tracker"],
-               "loc_data": collections.OrderedDict(),
-               "track_data": collections.OrderedDict(),
-               "cell_images": collections.OrderedDict(),
-               "flatfield": collections.OrderedDict()}
-
-        # Restore file tuples which were converted to lists by saving to YAML
-        for src in ret["sources"], ret["special_sources"]:
-            for k, files in src.items():
-                src[k] = [tuple(f) if isinstance(f, list) else f
-                          for f in files]
-
-        do_load = []
-        if loc:
-            do_load.append((ret["loc_data"], "_loc"))
-        if tracks:
-            do_load.append((ret["track_data"], "_trc"))
-        if len(do_load):
-            with pd.HDFStore(infile.with_suffix(".h5"), "r") as s:
-                for sink, suffix in do_load:
-                    keys = (k for k in s.keys() if k.endswith(suffix))
-                    for k in keys:
-                        new_key = k[1:-len(suffix)]
-                        loaded = s[k]
-                        if suffix == "_trc":
-                            # Restore categorical exc_type. See comment in
-                            # `save` method for details.
-                            loaded = loaded.astype(
-                                {("fret", "exc_type"): "category"})
-                        sink[new_key] = loaded
-
-        if cell_images:
-            cell_img_file = infile.with_suffix(".cell_img.npz")
-            try:
-                with np.load(cell_img_file) as data:
-                    ci = collections.OrderedDict(data)
-                ret["cell_images"] = collections.OrderedDict()
-                for k, v in ci.items():
-                    k_split = k.split("\n")
-                    if len(k_split) == 1:
-                        new_k = k_split[0]
-                    else:
-                        new_k = tuple(k_split)
-                    ret["cell_images"][new_k] = v
-            except Exception:
-                warnings.warn("Could not load cell images from file "
-                              f"\"{str(cell_img_file)}\".")
-        if flatfield:
-            flatfield_glob = str(infile.with_suffix(".flat_*.npz"))
-            key_re = re.compile(r"^\.flat_([\w\s-]+)")
-            for p in Path().glob(flatfield_glob):
-                m = key_re.match(p.suffixes[-2])
-                if m is None:
-                    warnings.warn("Could not load flatfield corrector from "
-                                  f"{str(p)}.")
-                else:
-                    ret["flatfield"][m.group(1)] = _flatfield.Corrector.load(p)
-
-        return ret
+        DataStore(localizations=self.loc_data, tracks=self.track_data,
+                  flatfield=self.flatfield,
+                  segment_images=self.segment_images, tracker=self.tracker,
+                  rois=self.rois, loc_options=loc_options,
+                  data_dir=self.data_dir, sources=self.sources,
+                  special_sources=self.special_sources).save(file_prefix)
 
     @classmethod
     def load(cls, file_prefix: str = "tracking", loc: bool = True,
@@ -908,15 +801,20 @@ class Tracker:
         -------
             Attributes reflect saved settings and data.
         """
-        cfg = cls.load_data(file_prefix, loc, tracks, cell_images, flatfield)
-
+        ds = DataStore.load(file_prefix)
         ret = cls()
 
-        for key in ("rois", "data_dir", "tracker", "loc_data", "track_data",
-                    "cell_images", "flatfield", "sources", "special_sources"):
-            setattr(ret, key, cfg[key])
+        for key in ("rois", "data_dir", "tracker", "segment_images",
+                    "flatfield", "sources", "special_sources"):
+            with contextlib.suppress(AttributeError):
+                setattr(ret, key, getattr(ds, key))
+        with contextlib.suppress(AttributeError):
+            ret.loc_data = ds.localizations
+        with contextlib.suppress(AttributeError):
+            ret.track_data = ds.tracks
 
-        for n, lo in cfg["loc_options"].items():
-            ret.locators[n].set_settings(lo)
+        with contextlib.suppress(AttributeError):
+            for n, lo in ds.loc_options.items():
+                ret.locators[n].set_settings(lo)
 
         return ret
