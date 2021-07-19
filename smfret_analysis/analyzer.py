@@ -705,7 +705,7 @@ class Analyzer:
                   (d["fret", "d_seg"] == 0) &
                   np.isfinite(d["fret", "eff_app"]) &
                   np.isfinite(d["fret", "stoi_app"])].copy()
-            labels = fret.gaussian_mixture_split(d, n_comp_sel.value)
+            labels = fret.gaussian_mixture_split(d, n_comp_sel.value)[0]
 
             ax = self._population_fig.axes[0]
             ax.cla()
