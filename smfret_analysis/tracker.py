@@ -5,6 +5,7 @@
 """Provide :py:class:`Tracker` as a Jupyter notebook UI for smFRET tracking"""
 import collections
 import contextlib
+import itertools
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Sequence, Union
 try:
@@ -460,12 +461,21 @@ class Tracker:
         Localization data for each dataset is collected in the
         :py:attr:`loc_data` dictionary.
         """
-        num_files = sum(len(s) for s in self.sources.values())
+        special_keys = [k for k in ("donor-only", "acceptor-only")
+                        if k in self.special_sources]
+        num_files = (sum(len(s) for s in self.sources.values()) +
+                     sum(len(self.special_sources[k]) for k in special_keys))
         cnt = 1
         label = ipywidgets.Label(value="Starting…")
         display(label)
 
-        for key, files in self.sources.items():
+        iter_data = itertools.chain(
+            itertools.product(
+                [self.loc_data], self.sources.items()),
+            itertools.product(
+                [self.special_loc_data],
+                ((k, self.special_sources[k]) for k in special_keys)))
+        for tgt, (key, files) in iter_data:
             ret = []
             for f in files.values():
                 label.value = f"Locating {f} ({cnt}/{num_files})"
@@ -488,7 +498,7 @@ class Tracker:
 
                 for o in opened:
                     o.close()
-            self.loc_data[key] = pd.concat(ret, keys=files.keys())
+            tgt[key] = pd.concat(ret, keys=files.keys())
 
     def track(self, feat_radius: int = 4, bg_frame: int = 3,
               link_radius: float = 1.0, link_mem: int = 1, min_length: int = 4,
@@ -537,7 +547,9 @@ class Tracker:
             considered overlapping and may be filtered later. If `None`,
             use ``2 * feat_radius + 1``. Defaults to `None`.
         """
-        num_files = sum(len(s) for s in self.sources.values())
+        special_keys = list(self.special_loc_data)
+        num_files = (sum(len(s) for s in self.sources.values()) +
+                     sum(len(self.special_sources[k]) for k in special_keys))
         cnt = 1
         label = ipywidgets.Label(value="Starting…")
         display(label)
@@ -553,14 +565,20 @@ class Tracker:
         else:
             self.tracker.neighbor_radius = 2 * feat_radius + 1
 
-        for key, files in self.sources.items():
+        iter_data = itertools.chain(
+            itertools.product(
+                [(self.loc_data, self.track_data)], self.sources.items()),
+            itertools.product(
+                [(self.special_loc_data, self.special_track_data)],
+                ((k, self.special_sources[k]) for k in special_keys)))
+        for (src, tgt), (key, files) in iter_data:
             ret = []
             new_p = 0  # Particle ID unique across files
             for fk, f in files.items():
                 label.value = f"Tracking {f} ({cnt}/{num_files})"
                 cnt += 1
 
-                loc = self.loc_data[key]
+                loc = src[key]
                 try:
                     loc = loc.loc[fk].copy()
                 except KeyError:
@@ -600,7 +618,7 @@ class Tracker:
 
                 for o in opened:
                     o.close()
-            self.track_data[key] = pd.concat(ret, keys=files.keys())
+            tgt[key] = pd.concat(ret, keys=files.keys())
 
     def extract_segment_images(self, key: str = "s", channel: str = "donor"):
         """Get images for segmentation
@@ -769,7 +787,7 @@ class Tracker:
         loc_options = collections.OrderedDict(
             [(k, v.get_settings()) for k, v in self.locators.items()])
 
-        DataStore(localizations=self.loc_data, tracks=self.track_data,
+        DataStore(localizations=self.loc_data, stracks=self.track_data,
                   flatfield=self.flatfield,
                   segment_images=self.segment_images, tracker=self.tracker,
                   rois=self.rois, loc_options=loc_options,
@@ -811,7 +829,11 @@ class Tracker:
         with contextlib.suppress(AttributeError):
             ret.loc_data = ds.localizations
         with contextlib.suppress(AttributeError):
+            ret.special_loc_data = ds.special_localizations
+        with contextlib.suppress(AttributeError):
             ret.track_data = ds.tracks
+        with contextlib.suppress(AttributeError):
+            ret.special_track_data = ds.special_tracks
 
         with contextlib.suppress(AttributeError):
             for n, lo in ds.loc_options.items():

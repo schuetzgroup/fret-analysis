@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """Provide :py:class:`Analyzer` as a Jupyter notebook UI for smFRET analysis"""
+import itertools
 from io import BytesIO
 from typing import Any, Callable, Dict, Iterable, Optional, Sequence, Union
 try:
@@ -34,10 +35,22 @@ class Analyzer:
     """Select frames of different excitation types"""
     analyzers: Dict[str, fret.SmFRETAnalyzer]
     """dataset key -> analyzer class instance"""
-    sources: Dict[str, Dict]
-    """dataset key -> source file information. The information is a dict
-    mapping "files" -> list of file names, "cells" -> bool as passed to
-    :py:meth:`Tracker.add_dataset`.
+    special_analyzers: Dict[str, fret.SmFRETAnalyzer]
+    """dataset key -> analyzer class instance for special-purpose (donor-only,
+    acceptor-only) datasets
+    """
+    sources: Dict[str, Dict[int, Union[str, Sequence[str]]]]
+    """Map of dataset name (see :py:meth:`add_dataset`) -> file id -> source
+    image file name(s).
+    """
+    special_sources: Dict[str, Dict[int, Union[str, Sequence[str]]]]
+    """Map of dataset name (see :py:meth:`add_dataset`) -> file id -> source
+    image file name(s). This is for special purpose datasets. Allowed keys:
+    - ``"registration"`` (fiducial markers for image registration)
+    - ``"donor-profile"``, ``"acceptor-profile"`` (densly labeled samples for
+        determination of excitation intensity profiles)
+    - ``"donor-only"``, ``"acceptor-only"`` (samples for determination of
+        leakage and direct excitation correction factors, respectively)
     """
     segment_images: Dict[str, Dict[str, np.ndarray]]
     """file name -> 3D array where the first index specifies which of possible
@@ -57,10 +70,12 @@ class Analyzer:
 
         self.rois = ds.rois
         self.frame_selector = ds.tracker.frame_selector
-        self.analyzers = {k: fret.SmFRETAnalyzer(v)
-                          for k, v in ds.tracks.items()}
-        self.special_analyzers = {}  # TODO
+        self.analyzers = {
+            k: fret.SmFRETAnalyzer(v) for k, v in ds.tracks.items()}
+        self.special_analyzers = {
+            k: fret.SmFRETAnalyzer(v) for k, v in ds.special_tracks.items()}
         self.sources = ds.sources
+        self.special_sources = ds.special_sources
         self.segment_images = ds.segment_images
         self.flatfield = ds.flatfield
 
@@ -96,19 +111,13 @@ class Analyzer:
         for ana in self.analyzers.values():
             ana.query_particles(query_d)
         for key, ana in self.special_analyzers.items():
-            if key.endswith("only"):
-                if key[0] == "d":
-                    ana.query_particles(query_d)
-                elif key[0] == "a":
-                    if frame is None:
-                        try:
-                            frame_a = np.nonzero(e_seq == "a")[0][0]
-                        except IndexError:
-                            raise ValueError(
-                                'excitation_seq does not contain "a".')
-                    else:
-                        frame_a = frame
-                    ana.query_particles(query_pat.format(frame_a))
+            if key[0] == "a" and key.endswith("only"):
+                if frame_a < 0:
+                    raise ValueError(
+                        "excitation seq does not contain \"a\"")
+                ana.query_particles(query_pat.format(frame_a))
+            else:
+                ana.query_particles(query_d)
 
     def find_beam_shape_thresh(self) -> ipywidgets.Widget:
         """Display a widget to set the laser intensity threshold
@@ -166,7 +175,8 @@ class Analyzer:
             Threshold in percent of the amplitude
         """
         mask = self.flatfield[channel].corr_img * 100 > thresh
-        for a in self.analyzers.values():
+        for a in itertools.chain(self.analyzers.values(),
+                                 self.special_analyzers.values()):
             a.image_mask(mask, channel, reason="beam_shape")
 
     def flatfield_correction(self):
@@ -176,7 +186,8 @@ class Analyzer:
         --------
         fret.SmFretAnalyzer.flatfield_correction
         """
-        for a in self.analyzers.values():
+        for a in itertools.chain(self.analyzers.values(),
+                                 self.special_analyzers.values()):
             a.flatfield_correction(self.flatfield["donor"],
                                    self.flatfield["acceptor"])
 
@@ -193,7 +204,8 @@ class Analyzer:
         --------
         fret.SmFretAnalyzer.calc_fret_values
         """
-        for a in self.analyzers.values():
+        for a in itertools.chain(self.analyzers.values(),
+                                 self.special_analyzers.values()):
             a.calc_fret_values(*args, **kwargs)
 
     def _make_dataset_selector(self, state: Dict,
@@ -341,11 +353,13 @@ class Analyzer:
         --------
         fret.SmFretAnalyzer.mass_changepoints
         """
-        for a in self.analyzers.values():
+        for a in itertools.chain(self.analyzers.values(),
+                                 self.special_analyzers.values()):
             a.mass_changepoints(channel, stats, stat_margin, **kwargs)
 
     def set_bleach_thresh(self, donor, acceptor):
-        for a in self.analyzers.values():
+        for a in itertools.chain(self.analyzers.values(),
+                                 self.special_analyzers.values()):
             a.bleach_thresh = (donor, acceptor)
 
     def filter_bleach_step(self,
@@ -378,6 +392,9 @@ class Analyzer:
         """
         for a in self.analyzers.values():
             a.bleach_step(condition)
+        for a in self.special_analyzers.values():
+            # This is the best we can do for donor-only and acceptor-only
+            a.bleach_step("no partial")
 
     def set_leakage(self, leakage: float):
         r"""Set the leakage correction factor for all datasets
@@ -391,33 +408,24 @@ class Analyzer:
         --------
         fret.SmFretAnalyzer.leakage
         """
-        for a in self.analyzers.values():
+        for a in itertools.chain(self.analyzers.values(),
+                                 self.special_analyzers.values()):
             a.leakage = leakage
 
-    def calc_leakage(self, remove: bool = True):
+    def calc_leakage(self):
         """Calculate leakage correction factor from donor-only sample
 
-        This uses the first (probably only) dataset with ``special=don-only``
-        set when calling :py:meth:`add_dataset`.
-
-        Parameters
-        ----------
-        remove
-            Remove donor-only dataset afterwards since it is probably not
-            of further interest.
+        This uses the ``"donor-only"`` special dataset (see
+        :py:meth:`fret.SmFRETTracker.add_special_dataset`).
 
         See also
         --------
         calc_leakage_from_bleached
-        fret.SmFretAnalyzer.calc_leakage
+        fret.SmFRETAnalyzer.calc_leakage
         """
-        dataset = next(k for k, v in self.sources.items()
-                       if v["special"].startswith("d"))
-        a = self.analyzers[dataset]
+        a = self.special_analyzers["donor-only"]
         a.calc_leakage()
         self.set_leakage(a.leakage)
-        if remove:
-            self.analyzers.pop(dataset)
 
     # TODO: Move to sdt package
     def calc_leakage_from_bleached(
@@ -488,33 +496,24 @@ class Analyzer:
         --------
         fret.SmFretAnalyzer.direct_excitation
         """
-        for a in self.analyzers.values():
+        for a in itertools.chain(self.analyzers.values(),
+                                 self.special_analyzers.values()):
             a.direct_excitation = dir_exc
 
-    def calc_direct_excitation(self, remove: bool = True):
+    def calc_direct_excitation(self):
         """Calculate direct excitation correction factor from acc-only sample
 
-        This uses the first (probably only) dataset with ``special=acc-only``
-        set when calling :py:meth:`add_dataset`.
-
-        Parameters
-        ----------
-        remove
-            Remove donor-only dataset afterwards since it is probably not
-            of further interest.
+        This uses the ``"acceptor-only"`` special dataset (see
+        :py:meth:`fret.SmFRETTracker.add_special_dataset`).
 
         See also
         --------
         calc_direct_excitation_from_bleached
-        fret.SmFretAnalyzer.calc_direct_excitation
+        fret.SmFRETAnalyzer.calc_direct_excitation
         """
-        dataset = next(k for k, v in self.sources.items()
-                       if v["special"].startswith("a"))
-        a = self.analyzers[dataset]
+        a = self.special_analyzers["acceptor_only"]
         a.calc_direct_excitation()
         self.set_direct_excitation(a.direct_excitation)
-        if remove:
-            self.analyzers.pop(dataset)
 
     # TODO: Move to sdt package
     def calc_direct_excitation_from_bleached(
@@ -586,7 +585,8 @@ class Analyzer:
         --------
         sdt.fret.SmFretAnalyzer.detection_eff
         """
-        for a in self.analyzers.values():
+        for a in itertools.chain(self.analyzers.values(),
+                                 self.special_analyzers.values()):
             a.detection_eff = eff
 
     def calc_detection_eff(self, min_part_len: int = 5,
@@ -665,7 +665,8 @@ class Analyzer:
         --------
         sdt.fret.SmFretAnalyzer.excitation_eff
         """
-        for a in self.analyzers.values():
+        for a in itertools.chain(self.analyzers.values(),
+                                 self.special_analyzers.values()):
             a.excitation_eff = eff
 
     def find_subpopulations(self) -> ipywidgets.Widget:
@@ -782,7 +783,8 @@ class Analyzer:
         pandas.DataFrame.eval
         sdt.fret.SmFretAnalyzer.query
         """
-        for a in self.analyzers.values():
+        for a in itertools.chain(self.analyzers.values(),
+                                 self.special_analyzers.values()):
             a.query(expr, mi_sep, reason)
 
     def query_particles(self, expr: str, min_abs: int = 1,
@@ -814,7 +816,8 @@ class Analyzer:
         pandas.DataFrame.eval
         sdt.fret.SmFretAnalyzer.query_particles
         """
-        for a in self.analyzers.values():
+        for a in itertools.chain(self.analyzers.values(),
+                                 self.special_analyzers.values()):
             a.query_particles(expr, min_abs, min_rel, mi_sep, reason)
 
     def find_segmentation_options(self) -> nbui.Thresholder:
@@ -901,7 +904,9 @@ class Analyzer:
             Prefix for the file written by this method. It will be suffixed by
             the output format version (v{output_version}) and file extension.
         """
-        DataStore(tracks={k: ana.tracks for k, ana in self.analyzers.items()}
+        DataStore(tracks={k: ana.tracks for k, ana in self.analyzers.items()},
+                  special_tracks={k: ana.tracks
+                                  for k, ana in self.special_analyzers.items()}
                   ).save(file_prefix, mode="update")
 
 

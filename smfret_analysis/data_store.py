@@ -90,14 +90,20 @@ class DataStore:
 
             with pd.HDFStore(outfile.with_suffix(".loc.h5"), file_mode) as s:
                 for key, loc in data.pop("localizations", {}).items():
-                    s.put(key, loc)
+                    s.put(f"/locs/{key}", loc)
+                for key, loc in data.pop("special_localizations", {}).items():
+                    s.put(f"/special_locs/{key}", loc)
             with pd.HDFStore(outfile.with_suffix(".tracks.h5"),
                              file_mode) as s:
                 for key, trc in data.pop("tracks", {}).items():
                     # Categorical exc_type does not allow for storing in fixed
                     # format while multiindex for both rows and columns does
                     # not work with table format…
-                    s.put(key, trc.astype({("fret", "exc_type"): str}))
+                    s.put(f"/tracks/{key}",
+                          trc.astype({("fret", "exc_type"): str}))
+                for key, trc in data.pop("special_tracks", {}).items():
+                    s.put(f"/special_tracks/{key}",
+                          trc.astype({("fret", "exc_type"): str}))
 
         if mode == "write":
             old = {}
@@ -300,18 +306,27 @@ class DataStore:
 
         if loc:
             ret["localizations"] = {}
+            ret["special_localizations"] = {}
             with pd.HDFStore(infile.with_suffix(".loc.h5"), "r") as s:
                 for k in s.keys():
-                    ret["localizations"][k[1:]] = s.get(k)
+                    loaded = s.get(k)
+                    if k.startswith("/locs/"):
+                        ret["localizations"][k[6:]] = loaded
+                    elif k.startswith("/special_locs/"):
+                        ret["special_localizations"][k[14:]] = loaded
         if tracks:
             ret["tracks"] = {}
+            ret["special_tracks"] = {}
             with pd.HDFStore(infile.with_suffix(".tracks.h5"), "r") as s:
                 for k in s.keys():
-                    loaded = s.get(k)
                     # Restore categorical exc_type. See comment in
                     # `save` method for details.
-                    ret["tracks"][k[1:]] = loaded.astype(
+                    loaded = s.get(k).astype(
                         {("fret", "exc_type"): "category"})
+                    if k.startswith("/tracks/"):
+                        ret["tracks"][k[8:]] = loaded
+                    elif k.startswith("/special_tracks/"):
+                        ret["special_tracks"][k[16:]] = loaded
         if segment_images:
             ret["segment_images"] = defaultdict(dict)
             seg_img_file = infile.with_suffix(".seg_img.npz")
