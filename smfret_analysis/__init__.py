@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+from .data_store import DataStore
 from .version import *
 from .tracker import Tracker
 from .analyzer import Analyzer, DensityPlots
