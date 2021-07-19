@@ -238,12 +238,14 @@ class Analyzer:
 
         def change_dataset(key=None):
             trc = self.analyzers[d_sel.value].apply_filters()
+            trc = trc[trc["fret", "exc_type"] == "d"]
             nan_mask = (np.isfinite(trc["fret", "a_mass"]) &
                         np.isfinite(trc["fret", "d_mass"]))
-            good_p = sorted(trc.loc[nan_mask, ("fret", "particle")].unique())
+            all_p = trc["fret", "particle"].unique()
+            bad_p = trc.loc[~nan_mask, ("fret", "particle")].unique()
             state["id"] = d_sel.value
             state["trc"] = trc
-            state["pnos"] = good_p
+            state["pnos"] = np.setdiff1d(all_p, bad_p)
 
             callback()
 
@@ -280,21 +282,18 @@ class Analyzer:
             p_label.value = f"Real particle number: {pi}"
             trc = state["trc"]
             t = trc[trc["fret", "particle"] == pi]
-            td = t[t["fret", "exc_type"] == "d"]
-            ta = t[t["fret", "exc_type"] == "a"]
 
-            fd = td["donor", "frame"].values
-            dm = td["fret", "d_mass"].values
-            fa = ta["donor", "frame"].values
-            am = ta["fret", "a_mass"].values
-            ef = td["fret", "eff_app"].values
-            hn = td["fret", "has_neighbor"].values
+            fd = t["donor", "frame"].values
+            dm = t["fret", "d_mass"].values
+            am = t["fret", "a_mass"].values
+            ef = t["fret", "eff_app"].values
+            hn = t["fret", "has_neighbor"].values
 
             cp_a = self.analyzers[state["id"]].cp_detector.find_changepoints(
                 am, pen_a_sel.value) - 1
             cp_d = self.analyzers[state["id"]].cp_detector.find_changepoints(
                 dm, pen_d_sel.value) - 1
-            cp_d_all = np.concatenate([np.searchsorted(fd, fa[cp_a]) - 1,
+            cp_d_all = np.concatenate([np.searchsorted(fd, fd[cp_a]) - 1,
                                        cp_d])
             cp_d_all = np.unique(cp_d_all)
             cp_d_all.sort()
@@ -302,8 +301,7 @@ class Analyzer:
             if len(fd):
                 changepoint.plot_changepoints(dm, cp_d, time=fd, ax=ax_dm)
                 changepoint.plot_changepoints(ef, cp_d_all, time=fd, ax=ax_eff)
-            if len(fa):
-                changepoint.plot_changepoints(am, cp_a, time=fa, ax=ax_am)
+                changepoint.plot_changepoints(am, cp_a, time=fd, ax=ax_am)
             ax_hn.plot(fd, hn, c="C2", alpha=0.2)
 
             ax_dm.relim(visible_only=True)
