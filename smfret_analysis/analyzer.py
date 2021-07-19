@@ -59,12 +59,15 @@ class Analyzer:
     flatfield: Dict[str, flatfield.Corrector]
     """channel name -> flatfield correction class instance"""
 
-    def __init__(self, file_prefix: str = "tracking"):
+    def __init__(self, file_prefix: str = "tracking",
+                 reset_filters: bool = True):
         """Parameters
         ----------
         file_prefix
             Prefix for :py:class:`Tracker` save files to load. Same as
             ``file_prefix`` argument passed to :py:meth:`Tracker.save`.
+        reset_filters
+            If `True`, reset filters in tracking data.
         """
         ds = DataStore.load(file_prefix, loc=False)
 
@@ -74,6 +77,10 @@ class Analyzer:
             k: fret.SmFRETAnalyzer(v) for k, v in ds.tracks.items()}
         self.special_analyzers = {
             k: fret.SmFRETAnalyzer(v) for k, v in ds.special_tracks.items()}
+        if reset_filters:
+            for a in itertools.chain(self.analyzers.values(),
+                                     self.special_analyzers.values()):
+                a.reset_filters()
         self.sources = ds.sources
         self.special_sources = ds.special_sources
         self.segment_images = ds.segment_images
