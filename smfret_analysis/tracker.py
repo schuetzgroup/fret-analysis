@@ -195,6 +195,8 @@ class Tracker:
         determination of excitation intensity profiles)
     - ``"donor-only"``, ``"acceptor-only"`` (samples for determination of
         leakage and direct excitation correction factors, respectively)
+    - ``"multi-state"`` (sample featuring multiple (>= 2) FRET states for
+        calculation of detection and excitation efficiency correction factors)
     """
     loc_data: Dict[str, pd.DataFrame]
     """Map of dataset name -> single-molecule localization data"""
@@ -461,8 +463,8 @@ class Tracker:
         Localization data for each dataset is collected in the
         :py:attr:`loc_data` dictionary.
         """
-        special_keys = [k for k in ("donor-only", "acceptor-only")
-                        if k in self.special_sources]
+        special_keys = (set(self.special_sources) &
+                        {"donor-only", "acceptor-only", "multi-state"})
         num_files = (sum(len(s) for s in self.sources.values()) +
                      sum(len(self.special_sources[k]) for k in special_keys))
         cnt = 1

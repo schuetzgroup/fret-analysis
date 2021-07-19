@@ -399,9 +399,12 @@ class Analyzer:
         """
         for a in self.analyzers.values():
             a.bleach_step(condition)
-        for a in self.special_analyzers.values():
-            # This is the best we can do for donor-only and acceptor-only
-            a.bleach_step("no partial")
+        for k, a in self.special_analyzers.items():
+            if k.endswith("only"):
+                # This is the best we can do for donor-only and acceptor-only
+                a.bleach_step("no partial")
+            else:
+                a.bleach_step(condition)
 
     def set_leakage(self, leakage: float):
         r"""Set the leakage correction factor for all datasets
@@ -753,6 +756,36 @@ class Analyzer:
         """
         a = self.analyzers[dataset]
         a.calc_excitation_eff(n_components, component)
+        self.set_excitation_eff(a.excitation_eff)
+
+    def calc_detection_excitation_effs(
+            self, n_components: int,
+            components: Optional[Sequence[int]] = None,
+            dataset: Optional[str] = None):
+        r"""Get detection and excitation efficiency from multi-state sample
+
+        States are found in efficiency-vs.-stoichiometry space using a
+        Gaussian mixture fit. Detection efficiency factor :math:`\gamma` and
+        excitation efficiency factor :math:`\delta` are found performing a
+        linear fit to the results [Hell2018]_.
+
+        Parameters
+        ----------
+        n_components
+            Number of components for Gaussian mixture model
+        components
+            List of indices of components to use for the linear fit. If `None`,
+            use all.
+        dataset
+            Name of the dataset to use. If `None` use the ``"multi-state"``
+            special dataset.
+        """
+        if dataset is None:
+            a = self.special_analyzers["multi-state"]
+        else:
+            a = self.analyzers[dataset]
+        a.calc_detection_excitation_effs(n_components, components)
+        self.set_detection_eff(a.detection_eff)
         self.set_excitation_eff(a.excitation_eff)
 
     def fret_correction(self, *args, **kwargs):
