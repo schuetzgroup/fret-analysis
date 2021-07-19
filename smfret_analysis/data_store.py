@@ -121,8 +121,9 @@ class DataStore:
             np.savez_compressed(outfile.with_suffix(".seg_img.npz"), **seg)
         if "flatfield" in data:
             if mode == "write":
-                for f, _ in io.get_files(
-                        fr"^{outfile}\.flat_([\w\s-]+)\.npz$"):
+                ffiles = io.get_files(
+                    fr"^{outfile}\.flat_([\w\s-]+)\.npz$")[0]
+                for f in ffiles:
                     Path(f).unlink()
             for k, ff in data.pop("flatfield").items():
                 ff.save(outfile.with_suffix(f".flat_{k}.npz"))

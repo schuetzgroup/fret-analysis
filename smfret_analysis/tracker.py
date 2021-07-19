@@ -789,7 +789,10 @@ class Tracker:
         loc_options = collections.OrderedDict(
             [(k, v.get_settings()) for k, v in self.locators.items()])
 
-        DataStore(localizations=self.loc_data, stracks=self.track_data,
+        DataStore(localizations=self.loc_data,
+                  special_localizations=self.special_loc_data,
+                  tracks=self.track_data,
+                  special_tracks=self.special_track_data,
                   flatfield=self.flatfield,
                   segment_images=self.segment_images, tracker=self.tracker,
                   rois=self.rois, loc_options=loc_options,
