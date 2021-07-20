@@ -15,6 +15,8 @@ import numpy as np
 import pandas as pd
 from sdt import fret, gui, io, multicolor
 
+from .data_store import DataStore
+
 
 class Dataset(gui.Dataset):
     def __init__(self, parent=None):
@@ -265,37 +267,26 @@ class Backend(QtCore.QObject):
         prefix, fileVer = self.prefixRe.match(self._filePath.name).groups()
         fileVer = int(fileVer)
 
-        # Works for fileVer == 13
-        with self._filePath.open() as yf:
-            ld = io.yaml.safe_load(yf)
-        ld["data_dir"] = Path(ld.get("data_dir", ""))
-        ld["track_data"] = {}
-        suffix = "_trc"
-        with pd.HDFStore(self._filePath.with_suffix(".h5"), "r") as s:
-            for k in filter(lambda k: k.endswith(suffix), s.keys()):
-                new_key = k[1:-len(suffix)]
-                # Restore categorical exc_type. See comment in `Tracker.save`
-                # method for details.
-                loaded = s[k].astype({("fret", "exc_type"): "category"})
-                ld["track_data"][new_key] = loaded
+        ld = DataStore.load(prefix, loc=False, segment_images=False,
+                            flatfield=False, version=fileVer)
 
-        with contextlib.suppress(KeyError):
-            self.minTrackLength = ld["filter"]["track_len"]["min"]
-        with contextlib.suppress(KeyError):
-            self.maxTrackLength = ld["filter"]["track_len"]["max"]
+        with contextlib.suppress(AttributeError, KeyError):
+            self.minTrackLength = ld.filter["track_len"]["min"]
+        with contextlib.suppress(AttributeError, KeyError):
+            self.maxTrackLength = ld.filter["track_len"]["max"]
 
         self.datasets.clear()
-        self.datasets.excitationSeq = ld["tracker"].excitation_seq
-        self.datasets.registrator = ld["tracker"].registrator
-        self.datasets.dataDir = str(ld["data_dir"])
+        self.datasets.excitationSeq = ld.tracker.excitation_seq
+        self.datasets.registrator = ld.tracker.registrator
+        self.datasets.dataDir = str(ld.data_dir)
 
-        for key, fileList in ld["sources"].items():
+        for key, fileList in ld.sources.items():
             if not fileList:
                 continue
             self.datasets.append(key)
             ds = self.datasets.get(self.datasets.rowCount() - 1, "dataset")
 
-            if isinstance(fileList[0], str):
+            if isinstance(next(iter(fileList.values())), str):
                 ids = {"donor": 0, "acceptor": 0}
                 ds.fileRoles = ["source_0"]
                 sourceCount = 1
@@ -304,21 +295,19 @@ class Backend(QtCore.QObject):
                 ds.fileRoles = ["source_0", "source_1"]
                 sourceCount = 2
             ds.channels = {chan: {"source_id": ids[chan],
-                                  "roi": ld["rois"][chan]}
+                                  "roi": ld.rois[chan]}
                            for chan in ("donor", "acceptor")}
             modelFileList = []
-            trc = ld["track_data"][key]
+            trc = ld.tracks[key]
             # Compute apparent eff and stoi
             ana = fret.SmFRETAnalyzer(trc)
             ana.calc_fret_values(a_mass_interp="next", skip_neighbors=False)
             trc = ana.tracks
-            for files in fileList:
+            for trcKey, files in fileList.items():
                 if sourceCount < 2:
                     entry = {"source_0": files}
-                    trcKey = files
                 else:
                     entry = {f"source_{i}": f for i, f in enumerate(files)}
-                    trcKey = tuple(files)
                 pList = ParticleList(ds)
                 pList.excitationSeq = ds.excitationSeq
                 try:
