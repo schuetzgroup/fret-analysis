@@ -10,7 +10,7 @@ import re
 import sys
 import warnings
 
-from PyQt5 import QtCore, QtGui, QtQml, QtQuick, QtWidgets
+from PyQt5 import QtCore, QtQml, QtQuick, QtWidgets
 import numpy as np
 import pandas as pd
 from sdt import fret, gui, io, multicolor
@@ -351,7 +351,7 @@ class Backend(QtCore.QObject):
             with self._filePath.open() as yf:
                 ld = io.yaml.safe_load(yf)
             ld["filter"] = {"track_len": {"min": self.minTrackLength,
-                                        "max": self.maxTrackLength}}
+                                          "max": self.maxTrackLength}}
             with self._filePath.open("w") as yf:
                 io.yaml.safe_dump(ld, yf)
 
@@ -434,7 +434,6 @@ class Backend(QtCore.QObject):
         fig = self.figureCanvas.figure
         fig.clf()
         fig.set_constrained_layout(True)
-        grid = fig.add_gridspec(1, 2)
         self._ax = fig.subplots(1, 2)
 
     @QtCore.pyqtSlot(QtCore.QVariant)
@@ -470,9 +469,9 @@ class Backend(QtCore.QObject):
             self._ax[1].set_ylabel("apparent stoichiometry")
         else:
             self._ax[1].plot(t["donor", "frame"], t["fret", "eff_app"], "C0",
-                            label="app. eff.")
+                             label="app. eff.")
             self._ax[1].plot(t["donor", "frame"], t["fret", "stoi_app"], "C1",
-                            label="app. stoi.")
+                             label="app. stoi.")
             self._ax[1].set_title("FRET")
             self._ax[1].set_xlabel("frame no.")
             self._ax[1].set_ylabel("value")
@@ -526,7 +525,7 @@ if __name__ == "__main__":
 
     comp = gui.Component(Path(__file__).absolute().with_suffix(".qml"))
     if comp.status_ == gui.Component.Status.Error:
-            sys.exit(1)
+        sys.exit(1)
     if args.tracks is not None:
         comp.backend.load(args.tracks)
 
