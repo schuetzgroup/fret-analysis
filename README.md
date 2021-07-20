@@ -24,14 +24,13 @@ please [cite](https://doi.org/10.5281/zenodo.4604567) the software.
   parameters as needed.
 - When finished, do the same using the `02. Filter` notebook.
 - Summary plots can be created with the `03. Plots` notebook.
-- If you want to inspect the tracking data, use the `Inspect` notebook.
 
 
 ## Requirements
 
 - Python >= 3.7
 - Jupyter Notebook or Lab
-- sdt-python >= 16.0.2
+- sdt-python >= 17.0
 - numpy
 - scipy
 - pandas
