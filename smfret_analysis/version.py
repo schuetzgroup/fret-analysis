@@ -7,8 +7,7 @@ import subprocess
 import sdt
 
 
-__version__ = "2.1"
-output_version = 13
+__version__ = "3.0"
 
 
 def print_info():
@@ -20,5 +19,4 @@ def print_info():
 
     print(f"""smFRET analysis software version {__version__}
 (git revision {git_rev})
-Output version {output_version}
 Using sdt-python version {sdt.__version__}""")
