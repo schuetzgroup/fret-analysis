@@ -183,8 +183,8 @@ class DataStore:
 
     @staticmethod
     def _load_v13(file_prefix: str, loc: bool, tracks: bool,
-                  segment_images: bool, flatfield: bool, filtered_file_prefix
-                  ) -> Dict:
+                  segment_images: bool, flatfield: bool,
+                  filtered_file_prefix: str) -> Dict:
         """Load data to a dictionary (v013 format)
 
         Parameters
@@ -247,6 +247,25 @@ class DataStore:
                             loaded = loaded.astype(
                                 {("fret", "exc_type"): "category"})
                         sink[new_key] = loaded
+
+        if tracks and filtered_file_prefix:
+            filtered_file = Path(f"{filtered_file_prefix}-v013.h5")
+            with pd.HDFStore(filtered_file, "r") as s:
+                for k, v in ret["tracks"].items():
+                    try:
+                        loaded = s[f"/{k}_trc"]
+                    except KeyError:
+                        # TODO: Warn?
+                        continue
+                    src = all_src[k]
+                    fname_map = pd.Series(src.keys(), index=src.values())
+                    loaded.index = loaded.index.set_levels(
+                        fname_map[loaded.index.levels[0]], level=0)
+                    v = loaded.combine_first(v)
+                    v["filter", "load_v013"] = 1
+                    v.loc[loaded.index, ("filter", "load_v013")] = 0
+                    ret["tracks"][k] = v.astype(
+                        {("fret", "exc_type"): "category"})
 
         if segment_images:
             seg_img_file = infile.with_suffix(".cell_img.npz")
