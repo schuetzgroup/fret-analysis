@@ -218,6 +218,11 @@ class DataStore:
         ret["segment_images"] = defaultdict(dict)
         ret["flatfield"] = {}
 
+        for src in ret["sources"], ret["special_sources"]:
+            for k, v in src.items():
+                if isinstance(v, list):
+                    src[k] = {n: i for n, i in enumerate(v)}
+
         all_src = {**ret["sources"], **ret["special_sources"]}
 
         do_load = []
