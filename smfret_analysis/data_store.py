@@ -5,7 +5,7 @@
 from collections import defaultdict
 from pathlib import Path
 import re
-from typing import Dict, Optional
+from typing import Dict, Iterable, Optional, Union
 import warnings
 
 import numpy as np
@@ -134,10 +134,12 @@ class DataStore:
             io.yaml.safe_dump(old, f)
 
     @classmethod
-    def load(cls, file_prefix: str = "tracking", loc: bool = True,
-             tracks: bool = True, segment_images: bool = True,
+    def load(cls, file_prefix: str = "tracking",
+             loc: Union[bool, Iterable[str]] = True,
+             tracks: Union[bool, Iterable[str]] = True,
+             segment_images: bool = True,
              flatfield: bool = True, version: Optional[int] = None,
-             filtered_file_prefix: str = "filtered"):
+             filtered_file_prefix: str = "filtered") -> "DataStore":
         """Load data to a new class instance
 
         Parameters
@@ -145,9 +147,13 @@ class DataStore:
         file_prefix
             Prefix used for saving via :py:meth:`save`.
         loc
-            Whether to load localization data.
+            Whether to load localization data. If `True`, load all data. If
+            `False`, don't load any. To load only certain datasets, specify
+            their keys.
         tracks
-            Whether to load tracking data.
+            Whether to load tracking data. If `True`, load all data. If
+            `False`, don't load any. To load only certain datasets, specify
+            their keys.
         cell_images
             Whether to load cell images.
         flatfield
@@ -182,9 +188,9 @@ class DataStore:
             raise ValueError(f"cannot load version {version} save files")
 
     @staticmethod
-    def _load_v13(file_prefix: str, loc: bool, tracks: bool,
-                  segment_images: bool, flatfield: bool,
-                  filtered_file_prefix: str) -> Dict:
+    def _load_v13(file_prefix: str, loc: Union[bool, Iterable[str]],
+                  tracks: Union[bool, Iterable[str]], segment_images: bool,
+                  flatfield: bool, filtered_file_prefix: str) -> Dict:
         """Load data to a dictionary (v013 format)
 
         Parameters
@@ -192,9 +198,13 @@ class DataStore:
         file_prefix
             Prefix used for saving via :py:meth:`save`.
         loc
-            Whether to load localization data.
+            Whether to load localization data. If `True`, load all data. If
+            `False`, don't load any. To load only certain datasets, specify
+            their keys.
         tracks
-            Whether to load tracking data.
+            Whether to load tracking data. If `True`, load all data. If
+            `False`, don't load any. To load only certain datasets, specify
+            their keys.
         cell_images
             Whether to load cell images.
         flatfield
@@ -227,13 +237,18 @@ class DataStore:
 
         do_load = []
         if loc:
-            do_load.append((ret["localizations"], "_loc"))
+            do_load.append((ret["localizations"], "_loc", loc))
         if tracks:
-            do_load.append((ret["tracks"], "_trc"))
+            do_load.append((ret["tracks"], "_trc", tracks))
         if len(do_load):
             with pd.HDFStore(infile.with_suffix(".h5"), "r") as s:
-                for sink, suffix in do_load:
-                    keys = (k for k in s.keys() if k.endswith(suffix))
+                for sink, suffix, user_keys in do_load:
+                    if isinstance(user_keys, bool):
+                        # was set to `True` to load all data
+                        keys = (k for k in s.keys() if k.endswith(suffix))
+                    else:
+                        # keys were specified
+                        keys = (f"/{k}{suffix}" for k in user_keys)
                     for k in keys:
                         new_key = k[1:-len(suffix)]
                         loaded = s[k]
@@ -241,11 +256,11 @@ class DataStore:
                         fname_map = pd.Series(src.keys(), index=src.values())
                         loaded.index = loaded.index.set_levels(
                             fname_map[loaded.index.levels[0]], level=0)
-                        if suffix == "_trc":
+                        if ("fret", "exc_type") in loaded:
                             # Restore categorical exc_type. See comment in
                             # `save` method for details.
                             loaded = loaded.astype(
-                                {("fret", "exc_type"): "category"})
+                                {("fret", "exc_type"): "category"}, copy=False)
                         sink[new_key] = loaded
 
         if tracks and filtered_file_prefix:
@@ -265,7 +280,7 @@ class DataStore:
                     v["filter", "load_v013"] = 1
                     v.loc[loaded.index, ("filter", "load_v013")] = 0
                     ret["tracks"][k] = v.astype(
-                        {("fret", "exc_type"): "category"})
+                        {("fret", "exc_type"): "category"}, copy=False)
 
         if segment_images:
             seg_img_file = infile.with_suffix(".cell_img.npz")
@@ -301,8 +316,9 @@ class DataStore:
         return ret
 
     @staticmethod
-    def _load_v14(file_prefix: str, loc: bool, tracks: bool,
-                  segment_images: bool, flatfield: bool) -> Dict:
+    def _load_v14(file_prefix: str, loc: Union[bool, Iterable[str]],
+                  tracks: Union[bool, Iterable[str]], segment_images: bool,
+                  flatfield: bool) -> Dict:
         """Load data to a dictionary (v014 format)
 
         Parameters
@@ -310,9 +326,13 @@ class DataStore:
         file_prefix
             Prefix used for saving via :py:meth:`save`.
         loc
-            Whether to load localization data.
+            Whether to load localization data. If `True`, load all data. If
+            `False`, don't load any. To load only certain datasets, specify
+            their keys.
         tracks
-            Whether to load tracking data.
+            Whether to load tracking data. If `True`, load all data. If
+            `False`, don't load any. To load only certain datasets, specify
+            their keys.
         segment_images
             Whether to load segmentation images.
         flatfield
@@ -333,7 +353,13 @@ class DataStore:
             ret["localizations"] = {}
             ret["special_localizations"] = {}
             with pd.HDFStore(infile.with_suffix(".loc.h5"), "r") as s:
-                for k in s.keys():
+                if isinstance(loc, bool):
+                    # was set to `True` to load all data
+                    keys = s.keys()
+                else:
+                    # keys were specified
+                    keys = (f"/locs/{k}" for k in tracks)
+                for k in keys:
                     loaded = s.get(k)
                     if k.startswith("/locs/"):
                         ret["localizations"][k[6:]] = loaded
@@ -343,11 +369,17 @@ class DataStore:
             ret["tracks"] = {}
             ret["special_tracks"] = {}
             with pd.HDFStore(infile.with_suffix(".tracks.h5"), "r") as s:
-                for k in s.keys():
+                if isinstance(tracks, bool):
+                    # was set to `True` to load all data
+                    keys = s.keys()
+                else:
+                    # keys were specified
+                    keys = (f"/tracks/{k}" for k in tracks)
+                for k in keys:
                     # Restore categorical exc_type. See comment in
                     # `save` method for details.
                     loaded = s.get(k).astype(
-                        {("fret", "exc_type"): "category"})
+                        {("fret", "exc_type"): "category"}, copy=False)
                     if k.startswith("/tracks/"):
                         ret["tracks"][k[8:]] = loaded
                     elif k.startswith("/special_tracks/"):
