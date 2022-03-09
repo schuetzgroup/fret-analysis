@@ -80,7 +80,7 @@ class DataStore:
             add or modify data without deleting anything not present in this
             instance.
             """
-        outfile = Path(f"{file_prefix}-v014")
+        outfile = Path(f"{file_prefix}-v015")
         data = self.__dict__.copy()
         file_mode = "w" if mode == "write" else "a"
 
@@ -88,28 +88,19 @@ class DataStore:
             import tables
             warnings.simplefilter("ignore", tables.NaturalNameWarning)
 
-            with pd.HDFStore(outfile.with_suffix(".loc.h5"), file_mode) as s:
-                for key, loc in data.pop("localizations", {}).items():
-                    s.put(f"/locs/{key}", loc)
-                for key, loc in data.pop("special_localizations", {}).items():
-                    s.put(f"/special_locs/{key}", loc)
-            with pd.HDFStore(outfile.with_suffix(".tracks.h5"),
-                             file_mode) as s:
-                for key, trc in data.pop("tracks", {}).items():
-                    # Categorical exc_type does not allow for storing in fixed
-                    # format while multiindex for both rows and columns does
-                    # not work with table format…
-                    s.put(f"/tracks/{key}",
-                          trc.astype({("fret", "exc_type"): str}))
-                for key, trc in data.pop("special_tracks", {}).items():
-                    s.put(f"/special_tracks/{key}",
-                          trc.astype({("fret", "exc_type"): str}))
+            with pd.HDFStore(outfile.with_suffix(".h5"), file_mode) as s:
+                for typ in ("sm_data", "special_sm_data"):
+                    for key, sms in data.pop(typ, {}).items():
+                        for fid, sm in sms.items():
+                            for sm_da, v in sm.items():
+                                s.put(f"/{typ[:-5]}/{key}/{fid}/{sm_da}", v,
+                                      format="table")
 
         if mode == "write":
             old = {}
             seg = {}
         else:
-            old = self.load(file_prefix, loc=False, tracks=False,
+            old = self.load(file_prefix, sm_data=False,
                             segment_images="segment_images" in data,
                             flatfield=False).__dict__.copy()
             seg = old.pop("segment_images", {})
@@ -135,8 +126,7 @@ class DataStore:
 
     @classmethod
     def load(cls, file_prefix: str = "tracking",
-             loc: Union[bool, Iterable[str]] = True,
-             tracks: Union[bool, Iterable[str]] = True,
+             sm_data: Union[bool, Iterable[str]] = True,
              segment_images: bool = True,
              flatfield: bool = True, version: Optional[int] = None,
              filtered_file_prefix: str = "filtered") -> "DataStore":
@@ -154,8 +144,8 @@ class DataStore:
             Whether to load tracking data. If `True`, load all data. If
             `False`, don't load any. To load only certain datasets, specify
             their keys.
-        cell_images
-            Whether to load cell images.
+        segment_images
+            Whether to load segmentation images.
         flatfield
             Whether to load flatfield corrections.
         filtered_file_prefix
@@ -167,8 +157,16 @@ class DataStore:
         -------
             Dictionary of loaded data and settings.
         """
+        if version in (15, None):
+            try:
+                return cls(**cls._load_v15(
+                    file_prefix, sm_data, segment_images, flatfield))
+            except FileNotFoundError:
+                if version is not None:
+                    raise
         if version in (14, None):
             try:
+                # FIXME
                 return cls(**cls._load_v14(
                     file_prefix, loc, tracks, segment_images, flatfield))
             except FileNotFoundError:
@@ -176,6 +174,7 @@ class DataStore:
                     raise
         if version in (13, None):
             try:
+                # FIXME
                 return cls(**cls._load_v13(
                     file_prefix, loc, tracks, segment_images, flatfield,
                     filtered_file_prefix))
@@ -205,8 +204,8 @@ class DataStore:
             Whether to load tracking data. If `True`, load all data. If
             `False`, don't load any. To load only certain datasets, specify
             their keys.
-        cell_images
-            Whether to load cell images.
+        segment_images
+            Whether to load segmentation images.
         flatfield
             Whether to load flatfield corrections.
         filtered_file_prefix
@@ -400,6 +399,87 @@ class DataStore:
             except Exception as e:
                 warnings.warn("Could not load segmentation images from file "
                               f"\"{str(seg_img_file)}\" ({e}).")
+        if flatfield:
+            ret["flatfield"] = {}
+            flatfield_glob = str(infile.with_suffix(".flat_*.npz"))
+            key_re = re.compile(r"^\.flat_([\w\s-]+)")
+            for p in Path().glob(flatfield_glob):
+                m = key_re.match(p.suffixes[-2])
+                if m is None:
+                    warnings.warn("Could not load flatfield corrector from "
+                                  f"{str(p)}.")
+                else:
+                    ret["flatfield"][m.group(1)] = _flatfield.Corrector.load(p)
+
+        return ret
+
+    @staticmethod
+    def _load_v15(file_prefix: str, sm_data: Union[bool, Iterable[str]],
+                  segment_images: bool, flatfield: bool) -> Dict:
+        """Load data to a dictionary (v014 format)
+
+        Parameters
+        ----------
+        file_prefix
+            Prefix used for saving via :py:meth:`save`.
+        sm_data
+            Whether to load single-molecule data. If `True`, load all data. If
+            `False`, don't load any. To load only certain datasets, specify
+            their keys.
+        segment_images
+            Whether to load segmentation images.
+        flatfield
+            Whether to load flatfield corrections.
+
+        Returns
+        -------
+            Dictionary of loaded data and settings.
+        """
+        infile = Path(f"{file_prefix}-v015")
+        with infile.with_suffix(".yaml").open() as f:
+            ret = io.yaml.safe_load(f)
+
+        if "data_dir" in ret:
+            ret["data_dir"] = Path(ret["data_dir"])
+
+        if sm_data:
+            ret["sm_data"] = {}
+            ret["special_sm_data"] = {}
+            with pd.HDFStore(infile.with_suffix(".h5"), "r") as s:
+                for k in s.keys():
+                    try:
+                        typ, key, fid, ex = k.split("/")[1:]
+                        fid = int(fid)
+                    except ValueError:
+                        # HDF path does not have the correct format
+                        continue
+                    if typ not in ("sm", "special_sm"):
+                        continue
+                    if not isinstance(sm_data, bool) and key not in sm_data:
+                        # key not specified to be loaded
+                        continue
+                    d = ret[f"{typ}_data"]
+                    if key not in d:
+                        d[key] = {}
+                    if fid not in d[key]:
+                        d[key][fid] = {}
+                    d[key][fid][ex] = s.get(k)
+
+        if segment_images:
+            ret["segment_images"] = defaultdict(dict)
+            seg_img_file = infile.with_suffix(".seg_img.npz")
+            try:
+                with np.load(seg_img_file) as data:
+                    ci = dict(data)
+                for k, v in ci.items():
+                    split_idx = k.rfind("/")
+                    k1 = k[:split_idx]
+                    k2 = int(k[split_idx+1:])
+                    ret["segment_images"][k1][k2] = v
+            except Exception as e:
+                warnings.warn("Could not load segmentation images from file "
+                              f"\"{str(seg_img_file)}\" ({e}).")
+
         if flatfield:
             ret["flatfield"] = {}
             flatfield_glob = str(infile.with_suffix(".flat_*.npz"))
