@@ -734,3 +734,40 @@ class TrackerBase(traitlets.HasTraits):
                 setattr(ret, key, getattr(ds, key))
 
         return ret
+
+
+class IntermolecularTrackerBase(TrackerBase):
+    codiffusion_options: Dict[str, Any] = traitlets.Dict(
+        default_value={"abs_threshold": 2, "rel_threshold": 0.0,
+                       "max_dist": 2.0})
+
+    def track_video(self, loc_data: Dict[str, pd.DataFrame]):
+        acc_loc = loc_data["acceptor"][[("acceptor", "x"), ("acceptor", "y"),
+                                        ("fret", "frame")]
+                                       ].droplevel(0, axis=1)
+        acc_loc.reset_index(inplace=True)
+        acc_loc = self.frame_selector.select(acc_loc, "a", renumber=True)
+        don_loc = loc_data["donor"][[("acceptor", "x"), ("acceptor", "y"),
+                                     ("fret", "frame")]
+                                    ].droplevel(0, axis=1)
+        don_loc = self.frame_selector.select(don_loc, "d", renumber=True)
+        don_loc.reset_index(inplace=True)
+
+        acc_tr = trackpy.link(acc_loc, **self.link_options)
+        don_tr = trackpy.link(don_loc, **self.link_options)
+
+        codiff = multicolor.find_codiffusion(
+            don_tr, acc_tr, **self.codiffusion_options,
+            channel_names=["donor", "acceptor"], keep_unmatched="all")
+
+        for ch in "donor", "acceptor":
+            idx = codiff[ch, "index"]
+            mask = np.isfinite(idx)  # lines with NaN as index have no match
+            m_idx = idx[mask].astype(np.intp)
+            for src, dest in [("donor", "d_particle"),
+                              ("acceptor", "a_particle"),
+                              ("codiff", "particle")]:
+                p = codiff.loc[mask, (src, "particle")].copy()
+                p.index = m_idx
+                loc_data[ch]["fret", dest] = \
+                    p.where(np.isfinite(p), -1).astype(np.intp)

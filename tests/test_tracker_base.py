@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2021 Lukas Schrangl <lukas.schrangl@tuwien.ac.at>
+# SPDX-FileCopyrightText: 2022 Lukas Schrangl <lukas.schrangl@tuwien.ac.at>
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
@@ -793,3 +793,143 @@ class TestTrackerBase:
                 np.testing.assert_allclose(v_l[fid], v[fid])
         for a in check_attrs:
             assert getattr(tr_l, a) == getattr(tr, a)
+
+
+class TestIntermolecularTrackerBase(TestTrackerBase):
+    @pytest.fixture
+    def loc_data(self):
+        da1 = pd.DataFrame({"x": [0.0] * 15, "y": [0.0] * 15})
+        aa1 = pd.DataFrame({"x": [0.0] * 8,
+                            "y": [2.0, 1.5, 1.0, 0.5, 2.0, 0.5, 2.0, 2.0]})
+        aa2 = pd.DataFrame({"x": [0.0] * 5, "y": [1.5, 0.5, 0.5, 0.5, 1.5]})
+        aa = pd.concat([aa1, aa2], ignore_index=True)
+        don_loc = pd.concat({"donor": da1, "acceptor": da1}, axis=1)
+        don_loc["fret", "frame"] = np.arange(0, 30, 2)
+        acc_loc = pd.concat({"donor": aa, "acceptor": aa}, axis=1)
+        acc_loc["fret", "frame"] = np.concatenate([np.arange(1, 17, 2),
+                                                   np.arange(21, 31, 2)])
+
+        return {"donor": don_loc, "acceptor": acc_loc}
+
+    def test_track_video(self, loc_data):
+        don_exp = loc_data["donor"].copy()
+        don_exp["fret", "d_particle"] = 0
+        don_exp["fret", "a_particle"] = ([-1] * 2 + [0] * 4 + [-1] * 5 +
+                                         [1] * 3 + [-1])
+        don_exp["fret", "particle"] = ([-1] * 2 + [0] * 4 + [-1] * 5 +
+                                       [1] * 3 + [-1])
+        acc_exp = loc_data["acceptor"].copy()
+        acc_exp["fret", "d_particle"] = ([-1] * 2 + [0] * 4 + [-1] * 3 +
+                                         [0] * 3 + [-1])
+        acc_exp["fret", "a_particle"] = [0] * 8 + [1] * 5
+        acc_exp["fret", "particle"] = ([-1] * 2 + [0] * 4 + [-1] * 3 +
+                                       [1] * 3 + [-1])
+
+        tr = tracker_base.IntermolecularTrackerBase("da")
+        tr.link_options = {"search_range": 2.0, "memory": 0}
+        tr.codiffusion_options["max_dist"] = 1.0
+        tr.track_video(loc_data)
+
+        pd.testing.assert_frame_equal(loc_data["donor"], don_exp)
+        pd.testing.assert_frame_equal(loc_data["acceptor"], acc_exp)
+
+    def test_track_all(self, loc_data):
+        tr = tracker_base.IntermolecularTrackerBase("da")
+        tr.link_options = {"search_range": 2.0, "memory": 0}
+        tr.codiffusion_options["max_dist"] = 1.0
+        tr.sources = {"data1": {0: "f1.tif", 1: "f2.tif"},
+                      "data2": {3: "f3.tif"}}
+        tr.special_sources = {"donor-only": {0: "f4.tif"}}
+        tr.sm_data = {"data1": {i: copy.deepcopy(loc_data) for i in (0, 1)},
+                      "data2": {3: copy.deepcopy(loc_data)}}
+        # Modify data to make sure each dataset is analyzed separately
+        tr.sm_data["data1"][1]["donor"].loc[2, ("donor", "x")] = -1
+        tr.sm_data["data1"][1]["donor"].loc[2, ("acceptor", "x")] = -1
+        tr.sm_data["data2"][3]["acceptor"].loc[5, ("donor", "x")] = -3
+        tr.sm_data["data2"][3]["acceptor"].loc[5, ("acceptor", "x")] = -3
+        tr.special_sm_data = {"donor-only": {0: copy.deepcopy(loc_data)}}
+        tr.special_sm_data["donor-only"][0]["donor"].drop(index=9,
+                                                          inplace=True)
+
+        e_data = copy.deepcopy(tr.sm_data)
+        se_data = copy.deepcopy(tr.special_sm_data)
+
+        cur_f = []
+        cur_n = []
+        total_n = []
+
+        def progress_cb(f, cur, total):
+            cur_f.append(f)
+            cur_n.append(cur)
+            total_n.append(total)
+
+        tr.track_all(progress_cb)
+
+        assert cur_f == [f"f{i}.tif" for i in range(1, 5)]
+        assert cur_n == list(range(len(cur_f)))
+        assert total_n == [len(cur_f)] * len(cur_f)
+
+        d_exp = e_data["data1"][0]["donor"]
+        d_exp["fret", "d_particle"] = 0
+        d_exp["fret", "a_particle"] = ([-1] * 2 + [0] * 4 + [-1] * 5 +
+                                       [1] * 3 + [-1])
+        d_exp["fret", "particle"] = ([-1] * 2 + [0] * 4 + [-1] * 5 +
+                                     [1] * 3 + [-1])
+        a_exp = e_data["data1"][0]["acceptor"]
+        a_exp["fret", "d_particle"] = ([-1] * 2 + [0] * 4 + [-1] * 3 +
+                                       [0] * 3 + [-1])
+        a_exp["fret", "a_particle"] = [0] * 8 + [1] * 5
+        a_exp["fret", "particle"] = ([-1] * 2 + [0] * 4 + [-1] * 3 +
+                                     [1] * 3 + [-1])
+        pd.testing.assert_frame_equal(tr.sm_data["data1"][0]["donor"], d_exp)
+        pd.testing.assert_frame_equal(tr.sm_data["data1"][0]["acceptor"],
+                                      a_exp)
+
+        d_exp = e_data["data1"][1]["donor"]
+        d_exp["fret", "d_particle"] = 0
+        d_exp["fret", "a_particle"] = ([-1] * 3 + [0] * 3 + [-1] * 5 +
+                                       [1] * 3 + [-1])
+        d_exp["fret", "particle"] = ([-1] * 3 + [0] * 3 + [-1] * 5 +
+                                     [1] * 3 + [-1])
+        a_exp = e_data["data1"][1]["acceptor"]
+        a_exp["fret", "d_particle"] = ([-1] * 3 + [0] * 3 + [-1] * 3 +
+                                       [0] * 3 + [-1])
+        a_exp["fret", "a_particle"] = [0] * 8 + [1] * 5
+        a_exp["fret", "particle"] = ([-1] * 3 + [0] * 3 + [-1] * 3 +
+                                     [1] * 3 + [-1])
+        pd.testing.assert_frame_equal(tr.sm_data["data1"][1]["donor"], d_exp)
+        pd.testing.assert_frame_equal(tr.sm_data["data1"][1]["acceptor"],
+                                      a_exp)
+
+        d_exp = e_data["data2"][3]["donor"]
+        d_exp["fret", "d_particle"] = 0
+        d_exp["fret", "a_particle"] = ([-1] * 2 + [0] * 2 + [-1] * 7 +
+                                       [3] * 3 + [-1])
+        d_exp["fret", "particle"] = ([-1] * 2 + [0] * 2 + [-1] * 7 +
+                                     [1] * 3 + [-1])
+        a_exp = e_data["data2"][3]["acceptor"]
+        a_exp["fret", "d_particle"] = ([-1] * 2 + [0] * 2 + [-1] * 5 +
+                                       [0] * 3 + [-1])
+        a_exp["fret", "a_particle"] = [0] * 5 + [1] + [2] * 2 + [3] * 5
+        a_exp["fret", "particle"] = ([-1] * 2 + [0] * 2 + [-1] * 5 +
+                                     [1] * 3 + [-1])
+        pd.testing.assert_frame_equal(tr.sm_data["data2"][3]["donor"], d_exp)
+        pd.testing.assert_frame_equal(tr.sm_data["data2"][3]["acceptor"],
+                                      a_exp)
+
+        d_exp = se_data["donor-only"][0]["donor"]
+        d_exp["fret", "d_particle"] = [0] * 9 + [1] * 5
+        d_exp["fret", "a_particle"] = ([-1] * 2 + [0] * 4 + [-1] * 4 +
+                                       [1] * 3 + [-1])
+        d_exp["fret", "particle"] = ([-1] * 2 + [0] * 4 + [-1] * 4 +
+                                     [1] * 3 + [-1])
+        a_exp = se_data["donor-only"][0]["acceptor"]
+        a_exp["fret", "d_particle"] = ([-1] * 2 + [0] * 4 + [-1] * 3 +
+                                       [1] * 3 + [-1])
+        a_exp["fret", "a_particle"] = [0] * 8 + [1] * 5
+        a_exp["fret", "particle"] = ([-1] * 2 + [0] * 4 + [-1] * 3 +
+                                     [1] * 3 + [-1])
+        pd.testing.assert_frame_equal(
+            tr.special_sm_data["donor-only"][0]["donor"], d_exp)
+        pd.testing.assert_frame_equal(
+            tr.special_sm_data["donor-only"][0]["acceptor"], a_exp)
