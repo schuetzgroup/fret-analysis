@@ -5,53 +5,23 @@
 from contextlib import suppress
 
 import numpy as np
-import matplotlib as mpl
 import matplotlib.pyplot as plt
 import ipywidgets
 from IPython.display import display
-import pims
 
 from sdt import fret, helper
 
-from .tracker import Tracker
+from .data_store import DataStore
 
 
 class Inspector:
     def __init__(self, file_prefix="tracking"):
-        cfg = Tracker.load_data(file_prefix, loc=False)
+        cfg = DataStore.load(file_prefix)
 
         self.track_data = cfg["track_data"]
         self.excitation_seq = cfg["tracker"].excitation_seq
         self.rois = cfg["rois"]
         self.data_dir = cfg["data_dir"]
-
-    # Copied from Tracker
-    def _pims_open_no_warn(self, f):
-        pth = self.data_dir / f
-        if pth.suffix.lower() == ".spe":
-            # Disable warnings about file size being wrong which is caused
-            # by SDT-control not dumping the whole file
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", UserWarning)
-                return pims.open(str(pth))
-        return pims.open(str(pth))
-
-    def _open_image_sequence(self, f):
-        if isinstance(f, tuple):
-            don = self._pims_open_no_warn(f[0])
-            acc = self._pims_open_no_warn(f[1])
-            to_close = [don, acc]
-        else:
-            don = acc = self._pims_open_no_warn(f)
-            to_close = [don]
-
-        ret = {}
-        for ims, chan in [(don, "donor"), (acc, "acceptor")]:
-            if self.rois[chan] is not None:
-                ims = self.rois[chan](ims)
-            ret[chan] = ims
-        return ret, to_close
-    # End of copy
 
     def make_dataset_selector(self, state, callback):
         d_sel = ipywidgets.Dropdown(options=list(self.track_data.keys()),
