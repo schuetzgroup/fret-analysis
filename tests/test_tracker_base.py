@@ -413,14 +413,14 @@ class TestTrackerBase:
 
     @pytest.fixture
     def loc_data(self):
-        d_loc = pd.DataFrame({("acceptor", "x"): [0, 2, 0, 2, 0, 2],
-                              ("acceptor", "y"): [0, 0, 2, 2, 4, 5],
+        d_loc = pd.DataFrame({("acceptor", "x"): [0.0, 2, 0, 2, 0, 2],
+                              ("acceptor", "y"): [0.0, 0, 2, 2, 4, 5],
                               ("fret", "frame"): [0, 0, 2, 2, 4, 6],
                               ("fret", "bla"): 111})
         d_loc["donor", "x"] = d_loc["acceptor", "x"]
         d_loc["donor", "y"] = d_loc["acceptor", "y"]
-        a_loc = pd.DataFrame({("acceptor", "x"): [0, 0, 0, 2, 2, 2],
-                              ("acceptor", "y"): [1, 3, 5, 1, 3, 4],
+        a_loc = pd.DataFrame({("acceptor", "x"): [0.0, 0, 0, 2, 2, 2],
+                              ("acceptor", "y"): [1.0, 3, 5, 1, 3, 4],
                               ("fret", "frame"): [1, 3, 5, 1, 3, 5]})
         a_loc["donor", "x"] = a_loc["acceptor", "x"]
         a_loc["donor", "y"] = a_loc["acceptor", "y"]
@@ -523,6 +523,173 @@ class TestTrackerBase:
             tr.special_sm_data["donor-only"][0]["donor"], d_exp)
         pd.testing.assert_frame_equal(
             tr.special_sm_data["donor-only"][0]["acceptor"], a_exp)
+
+    def test_interpolate_missing_video(self, loc_data, tmp_path):
+        for ld in loc_data.values():
+            ld["donor", "x"] += 30
+            ld["acceptor", "x"] += 30
+            ld["donor", "y"] += 25
+            ld["acceptor", "y"] += 25
+            ld["fret", "has_neighbor"] = 0
+        loc_data["donor"]["fret", "particle"] = [0, 1, 0, 1, 0, 2]
+        loc_data["acceptor"]["fret", "particle"] = [0, 0, 0, 1, 1, 2]
+
+        d_ims = np.array([np.full((50, 75), i) for i in range(1, 7)])
+        a_ims = np.array([np.full((50, 75), i) for i in range(2, 8)])
+        d_ims[2, 27, 30] = 5
+        a_ims[2, 27, 30] = 7
+        d_ims[3, 28, 30] = 8
+        a_ims[3, 28, 30] = 10
+        da_ims = np.concatenate([d_ims, a_ims], axis=2)
+
+        imageio.mimwrite(tmp_path / "d_ims.tif", d_ims)
+        imageio.mimwrite(tmp_path / "a_ims.tif", a_ims)
+        imageio.mimwrite(tmp_path / "da_ims.tif", da_ims)
+
+        d_exp = loc_data["donor"].copy()
+        d_exp["fret", "interp"] = 0
+        d_int = d_exp.loc[[2]]
+        d_int["donor", "bg"] = 3.0
+        d_int["donor", "bg_dev"] = 0.0
+        d_int["donor", "mass"] = 2.0
+        d_int["donor", "signal"] = 2.0
+        d_int["acceptor", "bg"] = 4.0
+        d_int["acceptor", "bg_dev"] = 0.0
+        d_int["acceptor", "mass"] = 3.0
+        d_int["acceptor", "signal"] = 3.0
+        d_int["fret", "has_neighbor"] = 1
+        d_int["fret", "interp"] = 1
+        d_int.drop(columns=("fret", "bla"), inplace=True)
+        d_exp = pd.concat([d_exp.drop(index=2), d_int])
+        d_exp.sort_values([("fret", "particle"), ("fret", "frame")],
+                          ignore_index=True, inplace=True)
+        a_exp = loc_data["acceptor"].copy()
+        a_exp["fret", "interp"] = 0
+        a_int = a_exp.loc[[1]]
+        a_int["donor", "bg"] = 4.0
+        a_int["donor", "bg_dev"] = 0.0
+        a_int["donor", "mass"] = 4.0
+        a_int["donor", "signal"] = 4.0
+        a_int["acceptor", "bg"] = 5.0
+        a_int["acceptor", "bg_dev"] = 0.0
+        a_int["acceptor", "mass"] = 5.0
+        a_int["acceptor", "signal"] = 5.0
+        a_int["fret", "has_neighbor"] = 1
+        a_int["fret", "interp"] = 1
+        a_exp = pd.concat([a_exp.drop(index=1), a_int])
+        a_exp.sort_values([("fret", "particle"), ("fret", "frame")],
+                          ignore_index=True, inplace=True)
+
+        loc_data["donor"].drop(index=2, inplace=True)
+        loc_data["acceptor"].drop(index=1, inplace=True)
+
+        tr = tracker_base.TrackerBase("da", tmp_path)
+        tr.brightness_options = {"radius": 1, "bg_frame": 1}
+        tr.neighbor_distance = 2
+
+        res = copy.deepcopy(loc_data)
+        tr.interpolate_missing_video(("d_ims.tif", "a_ims.tif"), res)
+        pd.testing.assert_frame_equal(res["donor"], d_exp)
+        pd.testing.assert_frame_equal(res["acceptor"], a_exp)
+
+        tr.rois = {"donor": roi.ROI((0, 0), size=(75, 50)),
+                   "acceptor": roi.ROI((75, 0), size=(75, 50))}
+        res = copy.deepcopy(loc_data)
+        tr.interpolate_missing_video("da_ims.tif", res)
+        pd.testing.assert_frame_equal(res["donor"], d_exp)
+        pd.testing.assert_frame_equal(res["acceptor"], a_exp)
+
+    def test_interpolate_missing_all(self, loc_data, tmp_path):
+        tr = tracker_base.TrackerBase("da", tmp_path)
+        tr.brightness_options = {"radius": 1, "bg_frame": 1}
+        tr.neighbor_distance = 2
+        tr.sources = {"data1": {0: "f1.tif", 1: "f2.tif"},
+                      "data2": {3: "f3.tif"}}
+        tr.special_sources = {"donor-only": {0: "f4.tif"}}
+        tr.rois = {"donor": roi.ROI((0, 0), size=(75, 50)),
+                   "acceptor": roi.ROI((75, 0), size=(75, 50))}
+
+        for ld in loc_data.values():
+            ld["donor", "x"] += 30
+            ld["acceptor", "x"] += 30
+            ld["donor", "y"] += 25
+            ld["acceptor", "y"] += 25
+            ld["fret", "has_neighbor"] = 0
+        loc_data["donor"]["fret", "particle"] = [0, 1, 0, 1, 0, 2]
+        loc_data["acceptor"]["fret", "particle"] = [0, 0, 0, 1, 1, 2]
+
+        d_exp = loc_data["donor"].copy()
+        d_exp["fret", "interp"] = 0
+        d_int = d_exp.loc[[2]]
+        d_int["donor", "bg"] = 3.0
+        d_int["acceptor", "bg"] = 4.0
+        d_int.drop(columns=("fret", "bla"), inplace=True)
+        a_exp = loc_data["acceptor"].copy()
+        a_exp["fret", "interp"] = 0
+        a_int = a_exp.loc[[1]]
+        a_int["donor", "bg"] = 4.0
+        a_int["acceptor", "bg"] = 5.0
+
+        for df in d_int, a_int:
+            for ch in "donor", "acceptor":
+                for col in "bg_dev", "mass", "signal":
+                    df[ch, col] = 0.0
+            for col in "has_neighbor", "interp":
+                df["fret", col] = 1
+
+        d_exp = pd.concat([d_exp.drop(index=2), d_int])
+        d_exp.sort_values([("fret", "particle"), ("fret", "frame")],
+                          ignore_index=True, inplace=True)
+        a_exp = pd.concat([a_exp.drop(index=1), a_int])
+        a_exp.sort_values([("fret", "particle"), ("fret", "frame")],
+                          ignore_index=True, inplace=True)
+
+        loc_data["donor"].drop(index=2, inplace=True)
+        loc_data["acceptor"].drop(index=1, inplace=True)
+
+        for i in range(1, 5):
+            d_ims = np.array([np.full((50, 75), i) for i in range(1, 7)])
+            a_ims = np.array([np.full((50, 75), i) for i in range(2, 8)])
+            d_ims[2, 27, 30] = 5 + i
+            a_ims[2, 27, 30] = 7 + i
+            d_ims[3, 28, 30] = 8 + i
+            a_ims[3, 28, 30] = 10 + i
+            da_ims = np.concatenate([d_ims, a_ims], axis=2)
+
+            imageio.mimwrite(tmp_path / f"f{i}.tif", da_ims)
+
+        tr.sm_data = {"data1": {i: copy.deepcopy(loc_data) for i in (0, 1)},
+                      "data2": {3: copy.deepcopy(loc_data)}}
+        tr.special_sm_data = {"donor-only": {0: copy.deepcopy(loc_data)}}
+
+        cur_f = []
+        cur_n = []
+        total_n = []
+
+        def progress_cb(f, cur, total):
+            cur_f.append(f)
+            cur_n.append(cur)
+            total_n.append(total)
+
+        tr.interpolate_missing_all(progress_cb)
+
+        assert cur_f == [f"f{i}.tif" for i in range(1, 5)]
+        assert cur_n == list(range(len(cur_f)))
+        assert total_n == [len(cur_f)] * len(cur_f)
+
+        for i, v in enumerate(itertools.chain(
+                tr.sm_data["data1"].values(), tr.sm_data["data2"].values(),
+                tr.special_sm_data["donor-only"].values())):
+
+            d_exp.loc[1, [("donor", "mass"), ("donor", "signal")]] = 3 + i
+            d_exp.loc[1, [("acceptor", "mass"),
+                          ("acceptor", "signal")]] = 4 + i
+            a_exp.loc[1, [("donor", "mass"), ("donor", "signal")]] = 5 + i
+            a_exp.loc[1, [("acceptor", "mass"),
+                          ("acceptor", "signal")]] = 6 + i
+
+            pd.testing.assert_frame_equal(v["donor"], d_exp)
+            pd.testing.assert_frame_equal(v["acceptor"], a_exp)
 
     def test_extract_segment_images(self, tmp_path):
         tr = tracker_base.TrackerBase("sxs", data_dir=tmp_path)
@@ -933,3 +1100,11 @@ class TestIntermolecularTrackerBase(TestTrackerBase):
             tr.special_sm_data["donor-only"][0]["donor"], d_exp)
         pd.testing.assert_frame_equal(
             tr.special_sm_data["donor-only"][0]["acceptor"], a_exp)
+
+    @pytest.mark.skip(reason="not implemented")
+    def test_interpolate_missing_video(self, loc_data):
+        pass
+
+    @pytest.mark.skip(reason="not implemented")
+    def test_interpolate_missing_all(self, loc_data):
+        pass
