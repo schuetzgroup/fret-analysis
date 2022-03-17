@@ -95,11 +95,14 @@ class TrackerBase(traitlets.HasTraits):
     """Options for fluorescence brightness measurement. See
     :py:func:`brightness.from_raw_image` for details.
     """
-    neighbor_radius: float = traitlets.Float()
+    neighbor_distance: float = traitlets.Float(default_value=None,
+                                               allow_none=True)
     """How far two features may be apart while still being considered close
     enough so that one influences the brightness measurement of the other.
     This is related to the `radius` option of
     :py:func:`brightness.from_raw_image`.
+
+    If `None`, ``2 * brightness_options["radius"] + 1`` is used.
     """
     flatfield_options: Dict[str, Any] = traitlets.Dict()
     """Options for flatfield correction. See
@@ -308,6 +311,18 @@ class TrackerBase(traitlets.HasTraits):
             return self.frame_selector.select(s, "d")
         return s
 
+    def _get_neighbor_distance(self):
+        """Get maximum distance up to which two signals are considered close
+
+        Returns
+        -------
+        :py:attr:`neighbor_distance` if not `None`, else
+        ``2 * self.brightness_options["radius"] + 1``.
+        """
+        if self.neighbor_distance is None:
+            return 2 * self.brightness_options["radius"] + 1
+        return self.neighbor_distance
+
     def locate_frame(self, donor_frame: np.ndarray, acceptor_frame: np.ndarray,
                      exc_type: str) -> pd.DataFrame:
         """Locate single molecules in a single frame
@@ -364,13 +379,10 @@ class TrackerBase(traitlets.HasTraits):
                         axis=1)
 
         # Flag localizations that are too close together
-        if self.neighbor_radius is None:
-            nr = 2 * self.brightness_options["radius"] + 1
-        else:
-            nr = self.neighbor_radius
-        if nr > 0:
+        nd = self._get_neighbor_distance()
+        if nd > 0:
             spatial.has_near_neighbor(
-                res, nr, columns={"coords": [("acceptor", "x"),
+                res, nd, columns={"coords": [("acceptor", "x"),
                                              ("acceptor", "y")]})
             # DataFrame.rename() does not work with MultiIndex
             cn = res.columns.tolist()
@@ -529,6 +541,75 @@ class TrackerBase(traitlets.HasTraits):
                     warnings.warn(f"Tracking failed for {cur_file}. "
                                   f"Reason: {e}")
                     sm["fret", "particle"] = -1
+
+    def interpolate_missing_video(self, source: Union[str, Tuple[str]],
+                                  loc_data: Dict[str, pd.DataFrame]):
+        cols = [("acceptor", "x"), ("acceptor", "y"), ("fret", "frame"),
+                ("fret", "particle")]
+        da_loc = pd.concat(
+            [loc_data[ch][cols] for ch in ("donor", "acceptor")],
+            ignore_index=True).droplevel(0, axis=1)
+        da_loc = spatial.interpolate_coords(da_loc)
+        interp_mask = da_loc["interp"] > 0
+        if not interp_mask.any():
+            return
+        nd = self._get_neighbor_distance()
+        if nd > 0:
+            spatial.has_near_neighbor(da_loc, nd)
+        else:
+            da_loc["has_neighbor"] = 0
+
+        da_loc_interp = da_loc[interp_mask]
+
+        d_loc = self.registrator(da_loc_interp, channel=2)
+        a_loc = da_loc_interp.copy()
+
+        opened = []
+        try:
+            im_seq, opened = self._open_image_sequence(source)
+            brightness.from_raw_image(d_loc, im_seq["donor"],
+                                      **self.brightness_options)
+            brightness.from_raw_image(a_loc, im_seq["acceptor"],
+                                      **self.brightness_options)
+        finally:
+            for o in opened:
+                o.close()
+
+        ex_cols = ["x", "y", "mass", "signal", "bg", "bg_dev"]
+        ex_loc = pd.concat({"donor": d_loc[ex_cols],
+                            "acceptor": a_loc[ex_cols],
+                            "fret": d_loc[["frame", "particle",
+                                           "has_neighbor", "interp"]]},
+                           axis=1)
+        for ch in "donor", "acceptor":
+            loc_data[ch]["fret", "interp"] = 0
+            ld = pd.concat(
+                [loc_data[ch], self.frame_selector.select(
+                    ex_loc, ch[0], columns={"time": ("fret", "frame")})],
+                ignore_index=True)
+            ld.sort_values([("fret", "particle"), ("fret", "frame")],
+                           ignore_index=True, inplace=True)
+            loc_data[ch] = ld
+
+    def interpolate_missing_all(
+            self,
+            progress_callback: Callable[[str, int, int],
+                                        None] = lambda x, y: None):
+        special_keys = list(self.special_sm_data)
+        num_files = (sum(len(s) for s in self.sm_data.values()) +
+                     sum(len(self.special_sm_data[k]) for k in special_keys))
+        cnt = 0
+
+        for key, sm_data, src in itertools.chain(
+                ((k, v, self.sources) for k, v in self.sm_data.items()),
+                ((k, self.special_sm_data[k], self.special_sources)
+                 for k in special_keys)):
+            for f_id, sm in sm_data.items():
+                cur_file = src[key][f_id]
+                progress_callback(cur_file, cnt, num_files)
+                cnt += 1
+
+                self.interpolate_missing_video(cur_file, sm)
 
     def extract_segment_images(self, key: str = "s", channel: str = "donor"):
         """Get images for segmentation
