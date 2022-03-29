@@ -852,3 +852,84 @@ class IntermolecularTrackerBase(TrackerBase):
                 p.index = m_idx
                 loc_data[ch]["fret", dest] = \
                     p.where(np.isfinite(p), -1).astype(np.intp)
+
+    def interpolate_missing_video(self, source: Union[str, Tuple[str]],
+                                  loc_data: Dict[str, pd.DataFrame]):
+        cols = [("acceptor", "x"), ("acceptor", "y"), ("fret", "frame"),
+                ("fret", "particle"), ("fret", "d_particle"),
+                ("fret", "a_particle")]
+        neigh_dist = self._get_neighbor_distance()
+
+        da_loc = {}
+        for ch, other in itertools.permutations(("donor", "acceptor")):
+            # Interpolate gaps in each channel's traces
+            loc = loc_data[ch][cols].droplevel(0, axis=1)
+            loc = spatial.interpolate_coords(
+                loc, columns={"particle": f"{ch[0]}_particle"})
+            loc_ch = self.frame_selector.select(loc, ch[0]).copy()
+            # Replace NaNs in particle columns
+            loc_ch.fillna(method="pad", inplace=True, downcast="infer")
+            # Check whether a change in particle number coincides with an
+            # interpolated position, in which case the interpolated position
+            # will not be assigned to a "particle"
+            interp_idx = loc_ch.index[loc_ch["interp"] > 0]
+            change_idx = np.nonzero(np.diff(loc_ch["particle"]))[0]
+            loc_ch.loc[np.intersect1d(interp_idx, change_idx),
+                       ["particle", f"{other[0]}_particle"]] = -1
+
+            # Create tracks in the other channel where there was no
+            # co-diffusion
+            loc_o = self.frame_selector.select(loc, other[0])
+
+            da_loc[ch, ch] = loc_ch
+            da_loc[other, ch] = loc_o
+
+        for ch, other in itertools.permutations(("donor", "acceptor")):
+            # Concat data from actual localizations and from interpolations
+            # in the other excitation channel
+            loc = pd.concat([da_loc[ch, ch], da_loc[ch, other]],
+                            ignore_index=True)
+            # This will get rid of interpolated data where actual data exists
+            loc.drop_duplicates(["frame", f"{other[0]}_particle"],
+                                inplace=True, keep="first")
+            # Fill NaNs in "particle" and other channel's particle columns
+            loc.fillna(-1, downcast="infer", inplace=True)
+
+            interp_mask = loc["interp"] > 0
+            if not interp_mask.any():
+                break
+            if neigh_dist > 0:
+                # TODO: Only flag as having a neighbor if nearby feature is
+                # not interpolated
+                spatial.has_near_neighbor(loc, neigh_dist)
+            else:
+                loc["has_neighbor"] = 0
+
+            loc_interp = loc[interp_mask]
+
+            d_loc = self.registrator(loc_interp, channel=2)
+            a_loc = loc_interp.copy()
+
+            opened = []
+            try:
+                im_seq, opened = self._open_image_sequence(source)
+                brightness.from_raw_image(d_loc, im_seq["donor"],
+                                          **self.brightness_options)
+                brightness.from_raw_image(a_loc, im_seq["acceptor"],
+                                          **self.brightness_options)
+            finally:
+                for o in opened:
+                    o.close()
+
+            ex_cols = ["x", "y", "mass", "signal", "bg", "bg_dev"]
+            ex_loc = pd.concat({"donor": d_loc[ex_cols],
+                                "acceptor": a_loc[ex_cols],
+                                "fret": d_loc[["frame", "particle",
+                                               "d_particle", "a_particle",
+                                               "has_neighbor", "interp"]]},
+                               axis=1)
+            loc_data[ch]["fret", "interp"] = 0
+            ld = pd.concat([loc_data[ch], ex_loc], ignore_index=True)
+            ld.sort_values([("fret", "particle"), ("fret", "frame")],
+                           ignore_index=True, inplace=True)
+            loc_data[ch] = ld
