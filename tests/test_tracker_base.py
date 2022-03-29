@@ -1101,10 +1101,129 @@ class TestIntermolecularTrackerBase(TestTrackerBase):
         pd.testing.assert_frame_equal(
             tr.special_sm_data["donor-only"][0]["acceptor"], a_exp)
 
-    @pytest.mark.skip(reason="not implemented")
-    def test_interpolate_missing_video(self, loc_data):
-        pass
+    def test_interpolate_missing_video(self, loc_data, tmp_path):
+        for ld in loc_data.values():
+            ld["donor", "x"] += 30
+            ld["acceptor", "x"] += 30
+            ld["donor", "y"] += 25
+            ld["acceptor", "y"] += 25
+            ld["fret", "has_neighbor"] = 0
+        loc_data["donor"]["fret", "d_particle"] = 0
+        loc_data["donor"]["fret", "a_particle"] = (
+            [-1] * 2 + [0] * 4 + [-1] * 5 + [1] * 3 + [-1])
+        loc_data["donor"]["fret", "particle"] = (
+            [-1] * 2 + [0] * 4 + [-1] * 5 + [1] * 3 + [-1])
+        loc_data["acceptor"]["fret", "d_particle"] = (
+            [-1] * 2 + [0] * 4 + [-1] * 3 + [0] * 3 + [-1])
+        loc_data["acceptor"]["fret", "a_particle"] = [0] * 8 + [1] * 5
+        loc_data["acceptor"]["fret", "particle"] = (
+            [-1] * 2 + [0] * 4 + [-1] * 3 + [1] * 3 + [-1])
 
-    @pytest.mark.skip(reason="not implemented")
+        d_ims = np.array([np.full((50, 75), i) for i in range(1, 31)])
+        a_ims = np.array([np.full((50, 75), i) for i in range(2, 32)])
+        d_ims[2, 27, 30] = 5
+        a_ims[2, 27, 30] = 7
+        d_ims[1, 25, 30] = 8
+        a_ims[1, 25, 30] = 10
+        da_ims = np.concatenate([d_ims, a_ims], axis=2)
+
+        imageio.mimwrite(tmp_path / "d_ims.tif", d_ims)
+        imageio.mimwrite(tmp_path / "a_ims.tif", a_ims)
+        imageio.mimwrite(tmp_path / "da_ims.tif", da_ims)
+
+        d_exp = loc_data["donor"].copy()
+        d_exp["fret", "interp"] = 0
+        d_int_f = pd.DataFrame({
+            # Last entry is for the localization dropped below, others are for
+            # non co-diffusing
+            "frame": [2, 12, 14, 22, 28, 22],
+            "a_particle": [0, 0, 0, 1, 1, -1],
+            "d_particle": [-1] * 5 + [0],
+            "particle": -1,
+            "interp": 1,
+            "has_neighbor": 1})
+        d_int_d = pd.DataFrame({
+            "x": 30.0,
+            "y": [26.75, 26.25, 27.0, 26.0, 26.0, 25.0],
+            "bg": [3, 13, 15, 23, 29, 23],
+            "bg_dev": 0.0,
+            "mass": [2.0] + [0.0] * 5,
+            "signal": [2.0] + [0.0] * 5})
+        d_int_a = d_int_d.copy()
+        d_int_a["bg"] += 1
+        d_int_a.loc[0, ["mass", "signal"]] += 1
+        d_int = pd.concat({"fret": d_int_f, "donor": d_int_d,
+                           "acceptor": d_int_a}, axis=1)
+        d_exp = pd.concat([d_exp.drop(index=11), d_int])
+        d_exp.sort_values([("fret", "particle"), ("fret", "frame"),
+                           ("fret", "d_particle")],
+                          ignore_index=True, inplace=True)
+        a_exp = loc_data["acceptor"].copy()
+        a_exp["fret", "interp"] = 0
+        a_int_f = pd.DataFrame({
+            # Last entry is for the localization dropped below, others are for
+            # non co-diffusing
+            "frame": [1, 3, 13, 15, 17, 19, 21, 7],
+            "a_particle": [-1] * 7 + [0],
+            "d_particle": [0] * 8,
+            "particle": [-1] * 7 + [0],
+            "interp": 1,
+            "has_neighbor": [1, 1, 1, 1, 0, 0, 1, 0]})
+        a_int_d = pd.DataFrame({
+            "x": 30.0,
+            "y": [25.0] * 7 + [26.5],
+            "bg": [2, 4, 14, 16, 18, 20, 22, 8],
+            "bg_dev": 0.0,
+            "mass": [6.0] + [0.0] * 7,
+            "signal": [6.0] + [0.0] * 7})
+        a_int_a = a_int_d.copy()
+        a_int_a["bg"] += 1
+        a_int_a.loc[0, ["mass", "signal"]] += 1
+        a_int = pd.concat({"fret": a_int_f, "donor": a_int_d,
+                           "acceptor": a_int_a}, axis=1)
+        a_exp = pd.concat([a_exp.drop(index=3), a_int])
+        a_exp.sort_values([("fret", "particle"), ("fret", "frame"),
+                           ("fret", "a_particle")],
+                          ignore_index=True, inplace=True)
+
+        # at the beginning of "fret", "particle" no. 1
+        loc_data["donor"].drop(index=11, inplace=True)
+        # somwhere in the middle of "fret", "particle" no. 0
+        loc_data["acceptor"].drop(index=3, inplace=True)
+
+        tr = tracker_base.IntermolecularTrackerBase("da", tmp_path)
+        tr.brightness_options = {"radius": 1, "bg_frame": 1}
+        tr.codiffusion_options["max_dist"] = 1.0
+        tr.neighbor_distance = 2
+
+        res = copy.deepcopy(loc_data)
+        tr.interpolate_missing_video(("d_ims.tif", "a_ims.tif"), res)
+        pd.testing.assert_frame_equal(
+            res["donor"].sort_values(
+                [("fret", "particle"), ("fret", "frame"),
+                 ("fret", "d_particle")], ignore_index=True),
+            d_exp)
+        pd.testing.assert_frame_equal(
+            res["acceptor"].sort_values(
+                [("fret", "particle"), ("fret", "frame"),
+                 ("fret", "a_particle")], ignore_index=True),
+            a_exp)
+
+        tr.rois = {"donor": roi.ROI((0, 0), size=(75, 50)),
+                   "acceptor": roi.ROI((75, 0), size=(75, 50))}
+        res = copy.deepcopy(loc_data)
+        tr.interpolate_missing_video("da_ims.tif", res)
+        pd.testing.assert_frame_equal(
+            res["donor"].sort_values(
+                [("fret", "particle"), ("fret", "frame"),
+                 ("fret", "d_particle")], ignore_index=True),
+            d_exp)
+        pd.testing.assert_frame_equal(
+            res["acceptor"].sort_values(
+                [("fret", "particle"), ("fret", "frame"),
+                 ("fret", "a_particle")], ignore_index=True),
+            a_exp)
+
     def test_interpolate_missing_all(self, loc_data):
+        # This method works for the base class and has not been reimplemented
         pass
