@@ -11,13 +11,13 @@ import pandas as pd
 import pytest
 from sdt import flatfield, funcs, helper, io, roi, sim
 
-from smfret_analysis import tracker_base
+from smfret_analysis import base
 
 
-class TestTrackerBase:
+class TestBaseTracker:
     def test_excitation_seq(self):
         seq = "sdddax"
-        tr = tracker_base.TrackerBase(seq)
+        tr = base.Tracker(seq)
         assert tr.excitation_seq == seq
         assert tr.frame_selector.excitation_seq == seq
 
@@ -43,7 +43,7 @@ class TestTrackerBase:
         exp_two_src = dict(enumerate(zip(good_files_d, good_files_a)))
 
         # test _get_files()
-        tr = tracker_base.TrackerBase(data_dir=tmp_path)
+        tr = base.Tracker(data_dir=tmp_path)
         assert tr._get_files(re_d) == exp_one_src
         assert tr._get_files(re_d, re_a) == exp_two_src
         assert tr._get_files(re_no_match) == {}
@@ -83,7 +83,7 @@ class TestTrackerBase:
         imageio.mimwrite(tmp_path / "img1.tif", ims1)
         imageio.mimwrite(tmp_path / "img2.tif", ims2)
 
-        tr = tracker_base.TrackerBase(data_dir=tmp_path)
+        tr = base.Tracker(data_dir=tmp_path)
         # Without ROIs, single source
         ims, to_close = tr._open_image_sequence("img1.tif")
         assert "donor" in ims
@@ -153,7 +153,7 @@ class TestTrackerBase:
         imageio.mimwrite(tmp_path / "beads1.tif", [imgs[0], imgs[1]])
         imageio.mimwrite(tmp_path / "beads2.tif", [imgs[2]])
 
-        tr = tracker_base.TrackerBase(data_dir=tmp_path)
+        tr = base.Tracker(data_dir=tmp_path)
         tr.rois = {"donor": d_roi, "acceptor": a_roi}
         tr.add_special_dataset("registration", r"beads\d\.tif")
         lo = {"algorithm": "Crocker-Grier",
@@ -186,7 +186,7 @@ class TestTrackerBase:
             [sim.simulate_gauss(img_shape[::-1], c2, 200, 1, engine="python")
              for c2 in coords[1]])
 
-        tr = tracker_base.TrackerBase("da")
+        tr = base.Tracker("da")
         tr.registrator.parameters1 = channel_transform
         tr.registrator.parameters2 = np.linalg.inv(channel_transform)
 
@@ -215,7 +215,7 @@ class TestTrackerBase:
         img_aa = sim.simulate_gauss(img_shape[::-1], coords[1][1], 1300, 1,
                                     mass=True, engine="python") + 200
 
-        tr = tracker_base.TrackerBase("da")
+        tr = base.Tracker("da")
         tr.registrator.parameters1 = channel_transform
         tr.registrator.parameters2 = np.linalg.inv(channel_transform)
         lo = {"algorithm": "Crocker-Grier",
@@ -320,7 +320,7 @@ class TestTrackerBase:
         imageio.mimwrite(tmp_path / "split_don.tif", [d_roi(i) for i in imgs])
         imageio.mimwrite(tmp_path / "split_acc.tif", [a_roi(i) for i in imgs])
 
-        tr = tracker_base.TrackerBase("da", data_dir=tmp_path)
+        tr = base.Tracker("da", data_dir=tmp_path)
         tr.registrator.parameters1 = channel_transform
         tr.registrator.parameters2 = np.linalg.inv(channel_transform)
         lo = {"algorithm": "Crocker-Grier",
@@ -359,7 +359,7 @@ class TestTrackerBase:
             imageio.mimwrite(tmp_path / f"split{n+1}_acc.tif",
                              [a_roi(i) for i in ims])
 
-        tr = tracker_base.TrackerBase("da", data_dir=tmp_path)
+        tr = base.Tracker("da", data_dir=tmp_path)
         tr.registrator.parameters1 = channel_transform
         tr.registrator.parameters2 = np.linalg.inv(channel_transform)
         lo = {"algorithm": "Crocker-Grier",
@@ -428,7 +428,7 @@ class TestTrackerBase:
         return {"donor": d_loc.copy(), "acceptor": a_loc.copy()}
 
     def test_track_video(self, loc_data):
-        tr = tracker_base.TrackerBase("da")
+        tr = base.Tracker("da")
 
         tr.link_options = {"search_range": 1.5, "memory": 0}
         sm_data = {k: v.copy() for k, v in loc_data.items()}
@@ -453,7 +453,7 @@ class TestTrackerBase:
         pd.testing.assert_frame_equal(sm_data["acceptor"], a_exp)
 
     def test_track_all(self, loc_data):
-        tr = tracker_base.TrackerBase("da")
+        tr = base.Tracker("da")
         tr.link_options = {"search_range": 1.5, "memory": 0}
         tr.sources = {"data1": {0: "f1.tif", 1: "f2.tif"},
                       "data2": {3: "f3.tif"}}
@@ -563,6 +563,7 @@ class TestTrackerBase:
         d_exp = pd.concat([d_exp.drop(index=2), d_int])
         d_exp.sort_values([("fret", "particle"), ("fret", "frame")],
                           ignore_index=True, inplace=True)
+        d_exp.sort_index(axis=1, inplace=True)
         a_exp = loc_data["acceptor"].copy()
         a_exp["fret", "interp"] = 0
         a_int = a_exp.loc[[1]]
@@ -579,28 +580,31 @@ class TestTrackerBase:
         a_exp = pd.concat([a_exp.drop(index=1), a_int])
         a_exp.sort_values([("fret", "particle"), ("fret", "frame")],
                           ignore_index=True, inplace=True)
+        a_exp.sort_index(axis=1, inplace=True)
 
         loc_data["donor"].drop(index=2, inplace=True)
         loc_data["acceptor"].drop(index=1, inplace=True)
 
-        tr = tracker_base.TrackerBase("da", tmp_path)
+        tr = base.Tracker("da", tmp_path)
         tr.brightness_options = {"radius": 1, "bg_frame": 1}
         tr.neighbor_distance = 2
 
         res = copy.deepcopy(loc_data)
         tr.interpolate_missing_video(("d_ims.tif", "a_ims.tif"), res)
-        pd.testing.assert_frame_equal(res["donor"], d_exp)
-        pd.testing.assert_frame_equal(res["acceptor"], a_exp)
+        pd.testing.assert_frame_equal(res["donor"].sort_index(axis=1), d_exp)
+        pd.testing.assert_frame_equal(res["acceptor"].sort_index(axis=1),
+                                      a_exp)
 
         tr.rois = {"donor": roi.ROI((0, 0), size=(75, 50)),
                    "acceptor": roi.ROI((75, 0), size=(75, 50))}
         res = copy.deepcopy(loc_data)
         tr.interpolate_missing_video("da_ims.tif", res)
-        pd.testing.assert_frame_equal(res["donor"], d_exp)
-        pd.testing.assert_frame_equal(res["acceptor"], a_exp)
+        pd.testing.assert_frame_equal(res["donor"].sort_index(axis=1), d_exp)
+        pd.testing.assert_frame_equal(res["acceptor"].sort_index(axis=1),
+                                      a_exp)
 
     def test_interpolate_missing_all(self, loc_data, tmp_path):
-        tr = tracker_base.TrackerBase("da", tmp_path)
+        tr = base.Tracker("da", tmp_path)
         tr.brightness_options = {"radius": 1, "bg_frame": 1}
         tr.neighbor_distance = 2
         tr.sources = {"data1": {0: "f1.tif", 1: "f2.tif"},
@@ -640,9 +644,11 @@ class TestTrackerBase:
         d_exp = pd.concat([d_exp.drop(index=2), d_int])
         d_exp.sort_values([("fret", "particle"), ("fret", "frame")],
                           ignore_index=True, inplace=True)
+        d_exp.sort_index(axis=1, inplace=True)
         a_exp = pd.concat([a_exp.drop(index=1), a_int])
         a_exp.sort_values([("fret", "particle"), ("fret", "frame")],
                           ignore_index=True, inplace=True)
+        a_exp.sort_index(axis=1, inplace=True)
 
         loc_data["donor"].drop(index=2, inplace=True)
         loc_data["acceptor"].drop(index=1, inplace=True)
@@ -688,11 +694,13 @@ class TestTrackerBase:
             a_exp.loc[1, [("acceptor", "mass"),
                           ("acceptor", "signal")]] = 6 + i
 
-            pd.testing.assert_frame_equal(v["donor"], d_exp)
-            pd.testing.assert_frame_equal(v["acceptor"], a_exp)
+            pd.testing.assert_frame_equal(v["donor"].sort_index(axis=1),
+                                          d_exp)
+            pd.testing.assert_frame_equal(v["acceptor"].sort_index(axis=1),
+                                          a_exp)
 
     def test_extract_segment_images(self, tmp_path):
-        tr = tracker_base.TrackerBase("sxs", data_dir=tmp_path)
+        tr = base.Tracker("sxs", data_dir=tmp_path)
         tr.sources = {"data1": {0: "f1.tif", 1: "f2.tif"},
                       "data2": {3: "f3.tif"}}
         tr.rois = {"donor": roi.ROI((0, 0), (2, 2)),
@@ -741,7 +749,7 @@ class TestTrackerBase:
         check_results(tr.segment_images, exp)
 
     def test_make_flatfield(self, tmp_path):
-        tr = tracker_base.TrackerBase("da", data_dir=tmp_path)
+        tr = base.Tracker("da", data_dir=tmp_path)
         tr.special_sources["donor-profile"] = {0: "d1.tif", 1: "d2.tif"}
         tr.special_sources["acceptor-profile"] = {0: "a1.tif", 1: "a2.tif"}
         tr.flatfield_options["bg"] = 15
@@ -802,7 +810,7 @@ class TestTrackerBase:
                                    np.ones((4, 4)))
 
     def test_make_flatfield_sm(self):
-        tr = tracker_base.TrackerBase("da")
+        tr = base.Tracker("da")
         tr.rois = {"donor": roi.ROI((5, 2), size=(25, 21)),
                    "acceptor": roi.ROI((7, 3), size=(25, 21))}
 
@@ -882,7 +890,7 @@ class TestTrackerBase:
         check_fit_result(tr.flatfield["acceptor"].fit_result, exp_a)
 
     def test_save_load(self, tmp_path, channel_transform, loc_data):
-        tr = tracker_base.TrackerBase("dda", data_dir=tmp_path)
+        tr = base.Tracker("dda", data_dir=tmp_path)
         tr.rois = {"donor": roi.ROI([5, 2], bottom_right=[30, 23]),
                    "acceptor": roi.ROI([7, 3], bottom_right=[32, 24])}
         tr.registrator.parameters1 = channel_transform
@@ -926,7 +934,7 @@ class TestTrackerBase:
 
         with io.chdir(tmp_path):
             tr.save()
-            tr_l = tracker_base.TrackerBase.load()
+            tr_l = base.Tracker.load()
 
         check_attrs.remove("frame_selector")
         assert (tr_l.frame_selector.excitation_seq ==
@@ -962,7 +970,7 @@ class TestTrackerBase:
             assert getattr(tr_l, a) == getattr(tr, a)
 
 
-class TestIntermolecularTrackerBase(TestTrackerBase):
+class TestBaseIntermolecularTracker(TestBaseTracker):
     @pytest.fixture
     def loc_data(self):
         da1 = pd.DataFrame({"x": [0.0] * 15, "y": [0.0] * 15})
@@ -992,7 +1000,7 @@ class TestIntermolecularTrackerBase(TestTrackerBase):
         acc_exp["fret", "particle"] = ([-1] * 2 + [0] * 4 + [-1] * 3 +
                                        [1] * 3 + [-1])
 
-        tr = tracker_base.IntermolecularTrackerBase("da")
+        tr = base.IntermolecularTracker("da")
         tr.link_options = {"search_range": 2.0, "memory": 0}
         tr.codiffusion_options["max_dist"] = 1.0
         tr.track_video(loc_data)
@@ -1001,7 +1009,7 @@ class TestIntermolecularTrackerBase(TestTrackerBase):
         pd.testing.assert_frame_equal(loc_data["acceptor"], acc_exp)
 
     def test_track_all(self, loc_data):
-        tr = tracker_base.IntermolecularTrackerBase("da")
+        tr = base.IntermolecularTracker("da")
         tr.link_options = {"search_range": 2.0, "memory": 0}
         tr.codiffusion_options["max_dist"] = 1.0
         tr.sources = {"data1": {0: "f1.tif", 1: "f2.tif"},
@@ -1158,6 +1166,7 @@ class TestIntermolecularTrackerBase(TestTrackerBase):
         d_exp.sort_values([("fret", "particle"), ("fret", "frame"),
                            ("fret", "d_particle")],
                           ignore_index=True, inplace=True)
+        d_exp.sort_index(axis=1, inplace=True)
         a_exp = loc_data["acceptor"].copy()
         a_exp["fret", "interp"] = 0
         a_int_f = pd.DataFrame({
@@ -1185,13 +1194,14 @@ class TestIntermolecularTrackerBase(TestTrackerBase):
         a_exp.sort_values([("fret", "particle"), ("fret", "frame"),
                            ("fret", "a_particle")],
                           ignore_index=True, inplace=True)
+        a_exp.sort_index(axis=1, inplace=True)
 
         # at the beginning of "fret", "particle" no. 1
         loc_data["donor"].drop(index=11, inplace=True)
         # somwhere in the middle of "fret", "particle" no. 0
         loc_data["acceptor"].drop(index=3, inplace=True)
 
-        tr = tracker_base.IntermolecularTrackerBase("da", tmp_path)
+        tr = base.IntermolecularTracker("da", tmp_path)
         tr.brightness_options = {"radius": 1, "bg_frame": 1}
         tr.codiffusion_options["max_dist"] = 1.0
         tr.neighbor_distance = 2
@@ -1201,12 +1211,14 @@ class TestIntermolecularTrackerBase(TestTrackerBase):
         pd.testing.assert_frame_equal(
             res["donor"].sort_values(
                 [("fret", "particle"), ("fret", "frame"),
-                 ("fret", "d_particle")], ignore_index=True),
+                 ("fret", "d_particle")], ignore_index=True
+                ).sort_index(axis=1),
             d_exp)
         pd.testing.assert_frame_equal(
             res["acceptor"].sort_values(
                 [("fret", "particle"), ("fret", "frame"),
-                 ("fret", "a_particle")], ignore_index=True),
+                 ("fret", "a_particle")], ignore_index=True
+                ).sort_index(axis=1),
             a_exp)
 
         tr.rois = {"donor": roi.ROI((0, 0), size=(75, 50)),
@@ -1216,12 +1228,14 @@ class TestIntermolecularTrackerBase(TestTrackerBase):
         pd.testing.assert_frame_equal(
             res["donor"].sort_values(
                 [("fret", "particle"), ("fret", "frame"),
-                 ("fret", "d_particle")], ignore_index=True),
+                 ("fret", "d_particle")], ignore_index=True
+                ).sort_index(axis=1),
             d_exp)
         pd.testing.assert_frame_equal(
             res["acceptor"].sort_values(
                 [("fret", "particle"), ("fret", "frame"),
-                 ("fret", "a_particle")], ignore_index=True),
+                 ("fret", "a_particle")], ignore_index=True
+                ).sort_index(axis=1),
             a_exp)
 
     def test_interpolate_missing_all(self, loc_data):

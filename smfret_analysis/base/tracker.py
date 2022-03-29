@@ -7,13 +7,8 @@ import contextlib
 import itertools
 import multiprocessing
 from pathlib import Path
-from typing import (Any, Callable, Dict, List, Optional, Sequence, Tuple,
-                    Union, overload)
-try:
-    from typing import Literal
-except ImportError:
-    # Python < 3.8
-    from .typing_extensions import Literal
+from typing import (Any, Callable, Dict, List, Literal, Optional, Sequence,
+                    Tuple, Union, overload)
 import warnings
 
 import numpy as np
@@ -23,7 +18,7 @@ from sdt import (brightness, flatfield as _flatfield, helper, io, loc,
 import trackpy
 import traitlets
 
-from .data_store import DataStore
+from ..data_store import DataStore
 
 
 @helper.pipeline(ancestor_count=2)
@@ -50,7 +45,7 @@ _loc_batch_funcs = {"3D-DAOSTORM": loc.daostorm_3d.batch,
                     "Crocker-Grier": loc.cg.batch}
 
 
-class TrackerBase(traitlets.HasTraits):
+class Tracker(traitlets.HasTraits):
     """Class for tracking of smFRET data """
 
     frame_selector: multicolor.FrameSelector
@@ -782,7 +777,7 @@ class TrackerBase(traitlets.HasTraits):
     @classmethod
     def load(cls, file_prefix: str = "tracking", sm_data: bool = True,
              segment_images: bool = True, flatfield: bool = True
-             ) -> "TrackerBase":
+             ) -> "Tracker":
         """Construct class instance from saved data
 
         Raw data needs to be accessible for this.
@@ -817,7 +812,7 @@ class TrackerBase(traitlets.HasTraits):
         return ret
 
 
-class IntermolecularTrackerBase(TrackerBase):
+class IntermolecularTracker(Tracker):
     codiffusion_options: Dict[str, Any] = traitlets.Dict(
         default_value={"abs_threshold": 2, "rel_threshold": 0.0,
                        "max_dist": 2.0})
