@@ -767,7 +767,7 @@ class Tracker(traitlets.HasTraits):
                   registrator=self.registrator,
                   registration_options=self.registration_options,
                   locate_options=self.locate_options,
-                  neighbor_radius=self.neighbor_radius,
+                  neighbor_distance=self.neighbor_distance,
                   brightness_options=self.brightness_options,
                   link_options=self.link_options,
                   flatfield_options=self.flatfield_options,
@@ -803,9 +803,10 @@ class Tracker(traitlets.HasTraits):
 
         for key in ("rois", "data_dir", "segment_images", "flatfield",
                     "excitation_seq", "registrator", "registration_options",
-                    "locate_options", "neighbor_radius", "brightness_options",
-                    "link_options", "flatfield_options", "sources",
-                    "special_sources", "sm_data", "special_sm_data"):
+                    "locate_options", "neighbor_distance",
+                    "brightness_options", "link_options", "flatfield_options",
+                    "sources", "special_sources", "sm_data",
+                    "special_sm_data"):
             with contextlib.suppress(AttributeError):
                 setattr(ret, key, getattr(ds, key))
 
