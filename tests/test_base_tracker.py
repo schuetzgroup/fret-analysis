@@ -915,7 +915,7 @@ class TestBaseTracker:
             5, ("fret", "frame")] = 4
         tr.flatfield_options["bg"] = 15
         tr.flatfield_options["smooth_sigma"] = 0
-        tr.neighbor_radius = 2
+        tr.neighbor_distance = 2
         tr.flatfield["donor"] = flatfield.Corrector(
             np.arange(1, 31).reshape((5, -1)), gaussian_fit=False)
         tr.flatfield["acceptor"] = flatfield.Corrector(
