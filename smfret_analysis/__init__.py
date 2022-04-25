@@ -4,6 +4,5 @@
 
 from .data_store import DataStore
 from .version import *
-from .analyzer import Analyzer, DensityPlots
 from .plotter import Plotter
 from .inspector import Inspector
