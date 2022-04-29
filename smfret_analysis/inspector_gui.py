@@ -200,7 +200,7 @@ class ParticleList(gui.ListModel):
         if role in ("dTrackData", "aTrackData"):
             d = d["donor" if role[0] == "d" else "acceptor"]
             d["particle"] = 0  # Fake particle number for TrackDisplay
-            d["size"] = 3  # Size is often undefined. Just draw large circle
+            d["size"] = 3.0  # Size is often undefined. Just draw large circle
             return d
 
     @QtCore.pyqtSlot(int, bool)
