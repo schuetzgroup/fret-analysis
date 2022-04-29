@@ -13,8 +13,9 @@ from typing import (Any, Callable, Dict, Iterable, Literal, Mapping, Optional,
 import numpy as np
 import pandas as pd
 from scipy.interpolate import interp1d
-from sdt import changepoint, flatfield, helper, roi
+from sdt import changepoint, flatfield, helper, image, multicolor, roi
 
+from . import tracker
 from ..data_store import DataStore
 
 
@@ -74,7 +75,8 @@ class Analyzer:
     the different excitation efficiencies according to [Lee2005]_.
     """
 
-    bleach_thresh: Sequence[float] = (500.0, 500.0)
+    bleach_threshold: Mapping[Literal["donor", "acceptor"], float
+                              ] = {"donor": 500, "acceptor": 500}
     """Intensity (mass) thresholds upon donor and acceptor excitation,
     respecitively, below which a signal is considered bleached. Used for
     bleaching step analysis.
@@ -112,6 +114,8 @@ class Analyzer:
     r"""Correction factor(s) for the excitation efficiency difference
     beteen donor and acceptor fluorophore; :math:`\beta` in [Hell2018].
     """
+    frame_selector: Optional[multicolor.FrameSelector] = None
+    """Select frames of different excitation types"""
 
     def __init__(self, cp_detector: Optional[Any] = None):
         """Parameters
@@ -447,7 +451,8 @@ class Analyzer:
                                                stat_names, stat_margin,
                                                **kwargs)
 
-    def _bleaches(self, steps: Sequence[float], channel: int) -> bool:
+    def _bleaches(self, steps: Sequence[float],
+                  channel: Literal["donor", "acceptor"]) -> bool:
         """Returns whether there is single-step bleaching
 
         Parameters
@@ -463,10 +468,10 @@ class Analyzer:
         `True` if track exhibits single-step bleaching, `False` otherwise.
         """
         return (len(steps) > 1 and
-                all(s < self.bleach_thresh[channel] for s in steps[1:]))
+                all(s < self.bleach_threshold[channel] for s in steps[1:]))
 
-    def _bleaches_partially(self, steps: Sequence[float], channel: int
-                            ) -> bool:
+    def _bleaches_partially(self, steps: Sequence[float],
+                            channel: Literal["donor", "acceptor"]) -> bool:
         """Returns whether there is partial bleaching
 
         Parameters
@@ -484,7 +489,7 @@ class Analyzer:
         threshold in a single step.
         """
         return (len(steps) > 1 and
-                any(s > self.bleach_thresh[channel] for s in steps[1:]))
+                any(s > self.bleach_threshold[channel] for s in steps[1:]))
 
     def _increment_reason_counter(self, reason: str) -> int:
         self._reason_counter[reason] += 1
@@ -556,19 +561,19 @@ class Analyzer:
             stat_d = [s[0] for s in split_d]
 
             if condition == "donor":
-                is_good = (self._bleaches(stat_d, 0) and not
-                           self._bleaches_partially(stat_a, 1))
+                is_good = (self._bleaches(stat_d, "donor") and not
+                           self._bleaches_partially(stat_a, "acceptor"))
             elif condition == "acceptor":
-                is_good = (self._bleaches(stat_a, 1) and not
-                           self._bleaches_partially(stat_d, 0))
+                is_good = (self._bleaches(stat_a, "acceptor") and not
+                           self._bleaches_partially(stat_d, "donor"))
             elif condition in ("donor or acceptor", "acceptor or donor"):
-                is_good = ((self._bleaches(stat_d, 0) and not
-                            self._bleaches_partially(stat_a, 1)) or
-                           (self._bleaches(stat_a, 1) and not
-                            self._bleaches_partially(stat_d, 0)))
+                is_good = ((self._bleaches(stat_d, "donor") and not
+                            self._bleaches_partially(stat_a, "acceptor")) or
+                           (self._bleaches(stat_a, "acceptor") and not
+                            self._bleaches_partially(stat_d, "donor")))
             elif condition == "no partial":
-                is_good = not (self._bleaches_partially(stat_d, 0) or
-                               self._bleaches_partially(stat_a, 1))
+                is_good = not (self._bleaches_partially(stat_d, "donor") or
+                               self._bleaches_partially(stat_a, "acceptor"))
             else:
                 raise ValueError(f"unknown strategy: {condition}")
 
@@ -597,9 +602,9 @@ class Analyzer:
         performing changepoint in both channels using :py:meth:`segment_mass`.
 
         The donor considered bleached if its ``("fret", f"d_seg_{stat}")``
-        is below :py:attr:`bleach_thresh` ``[0]``. The acceptor considered
-        bleached if its ``("fret", f"a_seg_{stat}")`` is below
-        :py:attr:`bleach_thresh` ``[0]``
+        is below :py:attr:`bleach_threshold` ``["donor"]``. The acceptor
+        considered bleached if its ``("fret", f"a_seg_{stat}")`` is below
+        :py:attr:`bleach_threshold` ``["acceptor"]``
 
         Parameters
         ----------
@@ -629,7 +634,7 @@ class Analyzer:
         less than 800 counts bleached. Remove all tracks that don't show
         acceptable bleaching behavior.
 
-        >>> ana.bleach_thresh = (800, 500)
+        >>> ana.bleach_threshold = {"donor": 800, "acceptor": 500}
         >>> ana.bleach_step("donor or acceptor")
         """
         reason_cnt = self._increment_reason_counter(reason)
@@ -989,6 +994,61 @@ class Analyzer:
         m_eff = np.nanmean(np.concatenate(eff))
         self.leakage = m_eff / (1 - m_eff)
 
+    def calc_leakage_from_bleached(
+            self, datasets: Union[str, Sequence[str], None] = None,
+            stat: str = "median", print_summary: bool = True):
+        """Calculate leakage correction factor from bleached acceptor traces
+
+        This takes those parts of traces where the acceptor is bleached, but
+        the donor isn't.
+
+        Parameters
+        ----------
+        datasets
+            dataset(s) to use. If `None`, use all.
+        stat
+            Statistic to use to determine bleaching steps. Has to be one that
+            was passed to via ``stats`` parameter to
+            :py:meth:`mass_changepoints`.
+        print_summary
+            Print number of datapoints and result.
+
+        See also
+        --------
+        calc_leakage
+        """
+        if isinstance(datasets, str):
+            datasets = (datasets,)
+        if datasets is not None:
+            datasets = (self.sm_data[k] for k in datasets)
+        else:
+            datasets = self.sm_data.values()
+
+        effs = []
+        for dset in datasets:
+            for d in dset.values():
+                trc = d["donor"]
+                # search for donor excitation frames where acceptor is bleached
+                # but donor isn't
+                # TODO: Respect filters?
+                sel = ((trc["fret", "has_neighbor"] == 0) &
+                       (trc["fret", "a_seg"] >= 1) &
+                       (trc["fret", f"a_seg_{stat}"] <
+                        self.bleach_threshold["acceptor"]) &
+                       (trc["fret", "d_seg"] == 0))
+                effs.append(trc.loc[sel, ("fret", "eff_app")].to_numpy())
+        effs = np.concatenate(effs)
+        m_eff = np.mean(effs)
+        self.leakage = m_eff / (1 - m_eff)
+
+        if print_summary:
+            n_data = len(effs)
+            e_eff = np.std(effs, ddof=1) / np.sqrt(n_data)  # SEM
+            err = 1 / (1 - m_eff)  # derivative of x / (1-x) is 1 / (1-x)**2
+            err = err * err * e_eff
+            print(f"leakage: {self.leakage:.4f} ± {err:.4f} (from {n_data} "
+                  "datapoints)")
+
     def calc_direct_excitation(self):
         r"""Calculate direct acceptor excitation by the donor laser
 
@@ -1019,6 +1079,62 @@ class Analyzer:
             stoi.append(d["donor"].loc[m, ("fret", "stoi_app")].to_numpy())
         m_stoi = np.nanmean(np.concatenate(stoi))
         self.direct_excitation = m_stoi / (1 - m_stoi)
+
+    def calc_direct_excitation_from_bleached(
+            self, datasets: Union[str, Sequence[str], None] = None,
+            stat: str = "median", print_summary: bool = True):
+        """Calculate dir. exc. correction factor from bleached donor traces
+
+        This takes those parts of traces where the donor is bleached, but
+        the acceptor isn't.
+
+        Parameters
+        ----------
+        datasets
+            dataset(s) to use. If `None`, use all.
+        stat
+            Statistic to use to determine bleaching steps. Has to be one that
+            was passed to via ``stats`` parameter to
+            :py:meth:`mass_changepoints`.
+        print_summary
+            Print number of datapoints and result.
+
+        See also
+        --------
+        calc_direct_excitation
+        """
+        if isinstance(datasets, str):
+            datasets = (datasets,)
+        if datasets is not None:
+            datasets = (self.sm_data[k] for k in datasets)
+        else:
+            datasets = self.sm_data.values()
+
+        stois = []
+        for dset in datasets:
+            for d in dset.values():
+                trc = d["donor"]
+                # search for donor excitation frames where donor is bleached
+                # but acceptor isn't
+                # TODO: Respect filters?
+                sel = ((trc["fret", "has_neighbor"] == 0) &
+                       (trc["fret", "a_seg"] == 0) &
+                       (trc["fret", "d_seg"] > 0) &
+                       (trc["fret", f"d_seg_{stat}"] <
+                        self.bleach_threshold["donor"]))
+                stois.append(trc.loc[sel, ("fret", "stoi_app")].values)
+        stois = np.concatenate(stois)
+
+        m_stoi = np.mean(stois)
+        self.direct_excitation = m_stoi / (1 - m_stoi)
+
+        if print_summary:
+            n_data = len(stois)
+            e_stoi = np.std(stois, ddof=1) / np.sqrt(n_data)  # SEM
+            err = 1 / (1 - m_stoi)  # derivative of x / (1-x) is 1 / (1-x)**2
+            err = err * err * e_stoi
+            print(f"direct exc.: {self.direct_excitation:.4f} ± {err:.4f} "
+                  f"(from {n_data} datapoints)")
 
     def _calc_detection_eff_single(self, tracks, min_seg_len, stat):
         gammas = pd.Series(np.NaN,
@@ -1339,6 +1455,112 @@ class Analyzer:
                     g = gammas[fid]
                 self._fret_correction_single(d, g)
 
+    def present_at_start(self, frame: Optional[int] = None,
+                         filter_reason: str = "at_start"):
+        """Remove tracks that are not present in the beginning
+
+        Parameters
+        ----------
+        frame
+            Start frame number. If `None`, use first donor excitation frame
+            except for the acceptor-only sample, where the first acceptor
+            excitation frame is used.
+        """
+        if frame is None:
+            if self.frame_selector is None:
+                raise ValueError("`frame` not specified and `frame_selector` "
+                                 "attribute not set.")
+            e_seq = self.frame_selector.eval_seq(-1)
+            frame = np.nonzero(e_seq == "d")[0][0]
+
+        # TODO: Do not apply to acceptor-only, maybe also not to donor-only
+        # This actually depends on whether acc or don excitation is first.
+        # Maybe don't apply to both?
+        self.query_particles(f"fret_frame == {frame}", reason=filter_reason)
+
+    def filter_beam_shape_region(self, channel: Literal["donor", "accetpor"],
+                                 thresh: float):
+        """Select only datapoints within the region of bright laser excitation
+
+        Parameters
+        ----------
+        channel
+            Which channel's laser profile to use.
+        thresh
+            Threshold in percent of the amplitude
+        """
+        mask = self.flatfield[channel].corr_img * 100 > thresh
+        self.image_mask(mask, channel, reason="beam_shape")
+
+    def apply_segmentation(self, datasets: Sequence[str],
+                           thresh_algorithm: str = "adaptive",
+                           channel: Literal["donor", "acceptor"] = "donor",
+                           reason: str = "segmentation", **kwargs):
+        """Remove datapoints from regions not selected by segmentation
+
+        Threshold cell images according to the parameters and use the resulting
+        mask to discard datapoints outside of thresholded regions.
+
+        Parameters
+        ----------
+        keys
+            Which datasets to apply cell masks to.
+        channel
+            If "donor", apply filter to donor coordinates. If "acceptor", apply
+            mask to acceptor coordinates.
+        thresh_algorithm
+            Use the ``thresh_algorithm + "_thresh"`` function from
+            :py:mod:`sdt.image` for thresholding.
+        **kwargs
+            Passed to the thresholding function.
+        """
+        reason_cnt = self._increment_reason_counter(reason)
+
+        if isinstance(thresh_algorithm, str):
+            thresh_algorithm = getattr(image, thresh_algorithm + "_thresh")
+
+        for k in datasets:
+            dset = self.sm_data[k]
+            simg = self.segment_images[k]
+            for fid, d in dset.items():
+                t = d["donor"]
+                max_frame = int(t["fret", "frame"].max()) + 1
+                c_frames = self.frame_selector.find_other_frames(
+                    max_frame, "da", "s", "previous")
+                c_frames = self.frame_selector.renumber_frames(c_frames, "s")
+                change_idx = np.nonzero(np.diff(c_frames))[0] + 1
+                if len(change_idx) > 0:
+                    change_idx = self.frame_selector.renumber_frames(
+                        change_idx, "da", restore=True)
+                start_idx = np.empty(len(change_idx)+1, dtype=int)
+                start_idx[0] = 0
+                start_idx[1:] = change_idx
+                stop_idx = np.empty_like(start_idx)
+                stop_idx[:-1] = change_idx
+                stop_idx[-1] = max_frame
+
+                masks = [{"mask": thresh_algorithm(c, **kwargs),
+                          "start": s, "end": e}
+                         for c, s, e in zip(simg[fid], start_idx, stop_idx)]
+                self._image_mask_single(d, masks, channel, reason, reason_cnt)
+
+    def save(self, file_prefix: str = "tracking"):
+        """Save data to disk
+
+        Parameters
+        ----------
+        file_prefix
+            Prefix of save files to save.
+        """
+        DataStore(sm_data=self.sm_data,
+                  special_sm_data=self.special_sm_data,
+                  bleach_threshold=self.bleach_threshold,
+                  leakage=self.leakage,
+                  direct_excitation=self.direct_excitation,
+                  detection_eff=self.detection_eff,
+                  excitation_eff=self.excitation_eff
+                  ).save(file_prefix, mode="update")
+
     @classmethod
     def load(cls, file_prefix: str = "tracking", reset_filters: bool = True
              ) -> "Analyzer":
@@ -1359,9 +1581,23 @@ class Analyzer:
         ds = DataStore.load(file_prefix)
 
         ret = cls()
-        for key in ("sm_data", "special_sm_data"):
+        for key in ("bleach_threshold", "flatfield",
+                    "leakage", "direct_excitation", "detection_eff",
+                    "excitation_eff", "segment_images", "sm_data",
+                    "special_sm_data"):
             with contextlib.suppress(AttributeError):
                 setattr(ret, key, getattr(ds, key))
+        with contextlib.suppress(AttributeError):
+            ret.frame_selector = multicolor.FrameSelector(ds.excitation_seq)
         if reset_filters:
             ret.reset_filters()
+        return ret
+
+    @classmethod
+    def from_tracker(cls, trk: tracker.Tracker) -> "Analyzer":
+        ret = cls()
+        for key in ("flatfield", "frame_selector", "segment_images", "sm_data",
+                    "special_sm_data"):
+            with contextlib.suppress(AttributeError):
+                setattr(ret, key, getattr(trk, key))
         return ret

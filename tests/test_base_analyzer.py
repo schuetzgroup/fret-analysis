@@ -8,7 +8,8 @@ import itertools
 import pandas as pd
 import numpy as np
 import pytest
-from sdt import changepoint, flatfield, multicolor
+from scipy import ndimage
+from sdt import changepoint, flatfield, io, multicolor, roi
 
 from smfret_analysis import base
 
@@ -145,6 +146,7 @@ class TestBaseAnalyzer:
                     df, "a", columns={"time": ("fret", "frame")})}
 
         ret = base.Analyzer()
+        ret.frame_selector = fsel
         ret.sm_data = {"k1": {0: split_df(pd.concat([data1, data2, data3],
                                                     ignore_index=True)),
                               1: split_df(pd.concat([data4, data5],
@@ -153,7 +155,7 @@ class TestBaseAnalyzer:
                                                     ignore_index=True))}}
         ret.special_sm_data = {"multi-state": {
             0: split_df(pd.concat([data9, data10], ignore_index=True))}}
-        ret.bleach_thresh = (800, 500)
+        ret.bleach_threshold = {"donor": 800, "acceptor": 500}
         return ret
 
     @pytest.fixture
@@ -214,6 +216,7 @@ class TestBaseAnalyzer:
                     df, "a", columns={"time": ("fret", "frame")})}
 
         ret = base.Analyzer()
+        ret.frame_selector = fsel
         ret.sm_data = {"k1": {0: split_df(df), 1: split_df(df2)},
                        "k2": {2: split_df(df3)}}
         ret.special_sm_data = {"multi-state": {0: split_df(df4)}}
@@ -706,7 +709,7 @@ class TestBaseAnalyzer:
         for dset in itertools.chain(ana1.sm_data.values(),
                                     ana1.special_sm_data.values()):
             for d in dset.values():
-                for sub in d.values():
+                for chan, sub in d.items():
                     assert ("filter", "bleach_step") in sub
                     exp = np.ones(len(sub), dtype=np.intp)
                     exp[sub["fret", "particle"].isin(particles)] = 0
@@ -748,13 +751,25 @@ class TestBaseAnalyzer:
     @staticmethod
     def _check_filter_result(actual_sm, actual_ssm, desired_sm, desired_ssm,
                              desired_transform):
-        for dset_a, dset_d in zip(
-                itertools.chain(actual_sm.values(), actual_ssm.values()),
-                itertools.chain(desired_sm.values(), desired_ssm.values())):
-            for d_a, d_d in zip(dset_a.values(), dset_d.values()):
-                for sub_a, sub_d in zip(d_a.values(), d_d.values()):
+        def comp(dset_a, dset_d):
+            for fid_a, d_a in dset_a.items():
+                assert fid_a in dset_d
+                d_d = dset_d[fid_a]
+                for chan, sub_a in d_a.items():
+                    assert chan in d_d
+                    sub_d = d_d[chan]
                     desired_transform(sub_d)
                     pd.testing.assert_frame_equal(sub_a, sub_d)
+
+        for k_a, dset_a in actual_sm.items():
+            assert k_a in desired_sm
+            dset_d = desired_sm[k_a]
+            comp(dset_a, dset_d)
+
+        for k_a, dset_a in actual_ssm.items():
+            assert k_a in desired_ssm
+            dset_d = desired_ssm[k_a]
+            comp(dset_a, dset_d)
 
     def test_query(self, ana1):
         sm = copy.deepcopy(ana1.sm_data)
@@ -1342,6 +1357,279 @@ class TestBaseAnalyzer:
                 np.testing.assert_allclose(
                     t["fret", "stoi"], (f_da + f) / (f_da + f + f_aa))
                 np.testing.assert_array_equal(t["fret", "bla"], fid)
+
+    def test_present_at_start(self, ana1):
+        t = ana1.sm_data["k1"][0]
+        for c in "donor", "acceptor":
+            t[c].loc[t[c]["fret", "particle"] == 1, ("fret", "frame")] += 2
+        t = ana1.sm_data["k2"][2]
+        for c in "donor", "acceptor":
+            t[c].loc[t[c]["fret", "particle"] == 6, ("fret", "frame")] += 2
+
+        def q(d):
+            d["filter", "bla"] = (d["fret", "particle"].isin([1, 6])
+                                  ).astype(np.intp)
+
+        sm = copy.deepcopy(ana1.sm_data)
+        ana1.present_at_start(filter_reason="bla")
+        self._check_filter_result(ana1.sm_data, {}, sm, {}, q)
+
+    def test_filter_beam_shape_region(self):
+        d_corr_img = np.zeros((150, 200))
+        d_corr_img[20:110, 30:180] = 10
+        d_corr_img[50:80, 40:150] = 20
+        a_corr_img = ndimage.shift(d_corr_img, (10, 20), order=0)
+
+        loc1 = pd.DataFrame({
+            ("donor", "x"): [10.0, 35.0, 35.0, 45.0, 45.0],
+            ("donor", "y"): [25.0, 10.0, 30.0, 30.0, 60.0],
+            ("acceptor", "x"): [10.0, 10.0, 65.0, 10.0, 10.0],
+            ("acceptor", "y"): [10.0, 10.0, 55.0, 10.0, 10.0]})
+        loc2 = pd.concat([loc1["acceptor"],
+                          loc1["donor"] + (20, 10)],
+                         keys=["donor", "acceptor"], axis=1)
+
+        ff = {"donor": flatfield.Corrector(d_corr_img, gaussian_fit=False),
+              "acceptor": flatfield.Corrector(a_corr_img,
+                                              gaussian_fit=False)}
+        sm = {"k1": {0: {"donor": loc1, "acceptor": loc2}}}
+
+        ana = base.Analyzer()
+        ana.flatfield = ff
+        ana.sm_data = copy.deepcopy(sm)
+        ana.filter_beam_shape_region("donor", 30)
+        np.testing.assert_array_equal(
+            ana.sm_data["k1"][0]["donor"]["filter", "beam_shape"],
+            [1, 1, 0, 0, 0])
+        np.testing.assert_array_equal(
+            ana.sm_data["k1"][0]["acceptor"]["filter", "beam_shape"],
+            [1, 1, 0, 1, 1])
+
+        ana = base.Analyzer()
+        ana.flatfield = ff
+        ana.sm_data = copy.deepcopy(sm)
+        ana.filter_beam_shape_region("donor", 70)
+        np.testing.assert_array_equal(
+            ana.sm_data["k1"][0]["donor"]["filter", "beam_shape"],
+            [1, 1, 1, 1, 0])
+
+        np.testing.assert_array_equal(
+            ana.sm_data["k1"][0]["acceptor"]["filter", "beam_shape"],
+            [1, 1, 0, 1, 1])
+
+        ana = base.Analyzer()
+        ana.flatfield = ff
+        ana.sm_data = copy.deepcopy(sm)
+        ana.filter_beam_shape_region("acceptor", 30)
+        np.testing.assert_array_equal(
+            ana.sm_data["k1"][0]["donor"]["filter", "beam_shape"],
+            [1, 1, 0, 1, 1])
+        np.testing.assert_array_equal(
+            ana.sm_data["k1"][0]["acceptor"]["filter", "beam_shape"],
+            [1, 1, 0, 0, 0])
+
+        ana = base.Analyzer()
+        ana.flatfield = ff
+        ana.sm_data = copy.deepcopy(sm)
+        ana.filter_beam_shape_region("acceptor", 70)
+        np.testing.assert_array_equal(
+            ana.sm_data["k1"][0]["donor"]["filter", "beam_shape"],
+            [1, 1, 1, 1, 1])
+        np.testing.assert_array_equal(
+            ana.sm_data["k1"][0]["acceptor"]["filter", "beam_shape"],
+            [1, 1, 1, 1, 0])
+
+    def test_calc_leakage_from_bleached(self):
+        loc1 = pd.DataFrame({
+            ("fret", "eff_app"): [0.8, 0.05, 0.13, 0.5, 0.7],
+            ("fret", "a_seg"): [0, 1, 1, 2, 2],
+            ("fret", "a_seg_mean"): [2000.0, 200.0, 200.0, 400.0, 200.0],
+            ("fret", "d_seg"): [0, 0, 0, 0, 0],
+            ("fret", "has_neighbor"): [0, 0, 0, 0, 1]})
+        loc2 = pd.DataFrame({
+            ("fret", "eff_app"): [0.8, 0.15, 0.06, 0.5],
+            ("fret", "a_seg"): [0, 1, 1, 2],
+            ("fret", "a_seg_mean"): [2000.0, 200.0, 200.0, 400.0],
+            ("fret", "d_seg"): [0, 0, 0, 0],
+            ("fret", "has_neighbor"): 0})
+        loc3 = pd.DataFrame({
+            ("fret", "eff_app"): [0.8, 0.14, 0.07, 0.5],
+            ("fret", "a_seg"): [0, 1, 1, 2],
+            ("fret", "a_seg_mean"): [2000.0, 200.0, 200.0, 400.0],
+            ("fret", "d_seg"): [0, 0, 0, 0],
+            ("fret", "has_neighbor"): 0})
+        loc4 = pd.DataFrame({
+            ("fret", "eff_app"): [0.8, 0.4, 0.5, 0.5],
+            ("fret", "a_seg"): [0, 1, 1, 2],
+            ("fret", "a_seg_mean"): [2000.0, 200.0, 200.0, 400.0],
+            ("fret", "d_seg"): [0, 0, 0, 0]})
+
+        ana = base.Analyzer()
+        ana.bleach_threshold = {"donor": 500, "acceptor": 300}
+        ana.sm_data = {"k1": {0: {"donor": loc1}, 1: {"donor": loc2}},
+                       "k2": {2: {"donor": loc3}},
+                       "k3": {3: {"donor": loc4}}}
+        ana.calc_leakage_from_bleached(datasets=["k1", "k2"], stat="mean",
+                                       print_summary=False)
+
+        assert ana.leakage == pytest.approx(0.1 / 0.9)
+
+    def test_calc_direct_excitation_from_bleached(self):
+        loc1 = pd.DataFrame({
+            ("fret", "stoi_app"): [0.8, 0.05, 0.13, 0.5, 0.7],
+            ("fret", "d_seg"): [0, 1, 1, 2, 2],
+            ("fret", "d_seg_mean"): [2000.0, 200.0, 200.0, 400.0, 200.0],
+            ("fret", "a_seg"): [0, 0, 0, 0, 0],
+            ("fret", "has_neighbor"): [0, 0, 0, 0, 1]})
+        loc2 = pd.DataFrame({
+            ("fret", "stoi_app"): [0.8, 0.15, 0.06, 0.5],
+            ("fret", "d_seg"): [0, 1, 1, 2],
+            ("fret", "d_seg_mean"): [2000.0, 200.0, 200.0, 400.0],
+            ("fret", "a_seg"): [0, 0, 0, 0],
+            ("fret", "has_neighbor"): 0})
+        loc3 = pd.DataFrame({
+            ("fret", "stoi_app"): [0.8, 0.14, 0.07, 0.5],
+            ("fret", "d_seg"): [0, 1, 1, 2],
+            ("fret", "d_seg_mean"): [2000.0, 200.0, 200.0, 400.0],
+            ("fret", "a_seg"): [0, 0, 0, 0],
+            ("fret", "has_neighbor"): 0})
+        loc4 = pd.DataFrame({
+            ("fret", "stoi_app"): [0.8, 0.4, 0.5, 0.5],
+            ("fret", "d_seg"): [0, 1, 1, 2],
+            ("fret", "d_seg_mean"): [2000.0, 200.0, 200.0, 400.0],
+            ("fret", "a_seg"): [0, 0, 0, 0]})
+
+        ana = base.Analyzer()
+        ana.bleach_threshold = {"donor": 300, "acceptor": 500}
+        ana.sm_data = {"k1": {0: {"donor": loc1}, 1: {"donor": loc2}},
+                       "k2": {2: {"donor": loc3}},
+                       "k3": {3: {"donor": loc4}}}
+        ana.calc_direct_excitation_from_bleached(
+            datasets=["k1", "k2"], stat="mean", print_summary=False)
+
+        assert ana.direct_excitation == pytest.approx(0.1 / 0.9)
+
+    def test_apply_segmentation(self):
+        img1 = np.zeros((2, 20, 31))
+        img1[0, :, 15] = 10
+        img1[0, :, 16:] = 20
+        img1[1, :, 20] = 10
+        img1[1, :, 21:] = 20
+        loc1 = pd.DataFrame({
+            ("donor", "x"): 28.0,
+            ("donor", "y"): 10.0,
+            ("acceptor", "x"): [5.0, 17.0, 28.0] * 2,
+            ("acceptor", "y"): 10.0,
+            ("fret", "frame"): [1, 1, 1, 5, 5, 5]})
+        img2 = np.zeros_like(img1)
+        img3 = np.zeros_like(img1)
+        img3[:, :, 21:] = 20
+        ana = base.Analyzer()
+        ana.sm_data = {"k1": {0: {"donor": loc1},
+                              1: {"donor": loc1.copy()}},
+                       "k2": {2: {"donor": loc1.copy()}},
+                       "k3": {3: {"donor": loc1.copy()}}}
+        ana.segment_images = {"k1": {0: img1, 1: img2}, "k2": {2: img3},
+                              "k3": {3: img2}}
+        ana.frame_selector = multicolor.FrameSelector("sddd")
+        ana.apply_segmentation(["k1", "k2"], "percentile", "acceptor",
+                               percentile=50, smooth=0)
+        r = ana.sm_data["k1"][0]["donor"]
+        assert ("filter", "segmentation") in r
+        np.testing.assert_array_equal(
+            r["filter", "segmentation"], [1, 0, 0, 1, 1, 0])
+        r = ana.sm_data["k1"][1]["donor"]
+        assert ("filter", "segmentation") in r
+        np.testing.assert_array_equal(
+            r["filter", "segmentation"], 1)
+        r = ana.sm_data["k2"][2]["donor"]
+        assert ("filter", "segmentation") in r
+        np.testing.assert_array_equal(
+            r["filter", "segmentation"], [1, 1, 0, 1, 1, 0])
+        r = ana.sm_data["k3"][3]["donor"]
+        assert ("filter", "segmentation") not in r
+
+    @pytest.fixture
+    def tracker(self):
+        loc_data = {"donor": pd.DataFrame({("fret", "frame"): [0, 1, 3, 4]}),
+                    "acceptor": pd.DataFrame({("fret", "frame"): [2, 5]})}
+        tr = base.Tracker("dda")
+        tr.rois = {"donor": roi.ROI([5, 2], bottom_right=[30, 23]),
+                   "acceptor": roi.ROI([7, 3], bottom_right=[32, 24])}
+        lo = {"algorithm": "Crocker-Grier",
+              "options": {"radius": 3, "signal_thresh": 400,
+                          "mass_thresh": 1000}}
+        tr.locate_options["donor"] = lo.copy()
+        lo["options"]["signal_thresh"] = 120
+        tr.locate_options["acceptor"] = lo.copy()
+        tr.brightness_options = {"radius": 4, "bg_frame": 3, "mask": "circle"}
+        tr.link_options = {"search_range": 1.5, "memory": 0}
+        tr.sources = {"data1": {0: "f1.tif", 1: "f2.tif"},
+                      "data2": {3: "f3.tif"}}
+        tr.special_sources = {"donor-only": {0: "f4.tif"}}
+        tr.sm_data = {"data1": {i: copy.deepcopy(loc_data) for i in (0, 1)},
+                      "data2": {3: copy.deepcopy(loc_data)}}
+        tr.special_sm_data = {"donor-only": {0: copy.deepcopy(loc_data)}}
+        tr.special_sm_data["donor-only"][0]["donor"].loc[
+            5, ("fret", "frame")] = 4
+        tr.flatfield_options["bg"] = 15
+        tr.neighbor_distance = 2
+        tr.flatfield["donor"] = flatfield.Corrector(
+            np.arange(1, 31).reshape((5, -1)), gaussian_fit=False)
+        tr.flatfield["acceptor"] = flatfield.Corrector(
+            np.arange(1, 31)[::-1].reshape((5, -1)), gaussian_fit=False)
+        tr.segment_images = {"data1": {0: np.array([np.full((2, 2), 10),
+                                                    np.full((2, 2), 30)]),
+                                       1: np.array([np.full((2, 2), 20),
+                                                    np.full((2, 2), 60)])},
+                             "data2": {3: np.array([np.full((2, 2), 30),
+                                                    np.full((2, 2), 90)])}}
+        return tr
+
+    def _check_analyzer_from_tracker(self, ana, tracker):
+        np.testing.assert_array_equal(ana.flatfield["donor"].corr_img,
+                                      tracker.flatfield["donor"].corr_img)
+        np.testing.assert_array_equal(ana.flatfield["acceptor"].corr_img,
+                                      tracker.flatfield["acceptor"].corr_img)
+        assert (ana.frame_selector.excitation_seq ==
+                tracker.frame_selector.excitation_seq)
+
+        self._check_filter_result(ana.sm_data, ana.special_sm_data,
+                                  tracker.sm_data, tracker.special_sm_data,
+                                  lambda x: None)
+        assert ana.segment_images.keys() == tracker.segment_images.keys()
+        for k in ana.segment_images.keys():
+            ai = ana.segment_images[k]
+            ti = tracker.segment_images[k]
+            assert ai.keys() == ti.keys()
+            for fid in ai.keys():
+                np.testing.assert_array_equal(ai[fid], ti[fid])
+
+    def test_save_load(self, tracker, tmp_path):
+        with io.chdir(tmp_path):
+            tracker.save("my_prefix")
+            ana = base.Analyzer.load("my_prefix")
+        self._check_analyzer_from_tracker(ana, tracker)
+        ana.sm_data["data1"][0]["donor"]["filter", "bla"] = 1
+        ana.leakage = 0.1
+        with io.chdir(tmp_path):
+            ana.save("my_prefix")
+            ana2 = base.Analyzer.load("my_prefix", reset_filters=False)
+            ana2_nof = base.Analyzer.load("my_prefix", reset_filters=True)
+            tracker2 = base.Tracker.load("my_prefix")
+
+        self._check_analyzer_from_tracker(ana2, ana)
+        assert ana2.leakage == pytest.approx(0.1)
+        self._check_analyzer_from_tracker(ana2_nof, tracker)
+        assert ana2_nof.leakage == pytest.approx(0.1)
+        self._check_analyzer_from_tracker(tracker2, ana)
+        assert tracker.rois == tracker2.rois
+        assert tracker.locate_options == tracker2.locate_options
+        assert tracker.sources == tracker2.sources
+
+    def test_from_tracker(self, tracker):
+        ana = base.Analyzer.from_tracker(tracker)
+        self._check_analyzer_from_tracker(ana, tracker)
 
 
 def test_gaussian_mixture_split():
