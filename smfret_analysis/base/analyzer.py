@@ -125,6 +125,8 @@ class Analyzer:
             :py:class:`changepoint.Pelt` instance with ``model="l2"``,
             ``min_size=1``, and ``jump=1``.
         """
+        super().__init__()
+
         self.sm_data = {}
         self.special_sm_data = {}
 
@@ -1584,7 +1586,7 @@ class Analyzer:
         for key in ("bleach_threshold", "flatfield",
                     "leakage", "direct_excitation", "detection_eff",
                     "excitation_eff", "segment_images", "sm_data",
-                    "special_sm_data"):
+                    "special_sm_data", "sources"):
             with contextlib.suppress(AttributeError):
                 setattr(ret, key, getattr(ds, key))
         with contextlib.suppress(AttributeError):
