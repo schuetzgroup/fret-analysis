@@ -699,7 +699,9 @@ class Analyzer:
 
         return e
 
-    def query(self, expr: str, mi_sep: str = "_", reason: str = "query"):
+    def query(self, expr: str, mi_sep: str = "_",
+              ex_channel: Literal["donor", "acceptor", "both"] = "donor",
+              reason: str = "query"):
         """Filter features according to column values
 
         Flatten the column MultiIndex and filter the resulting DataFrame's
@@ -722,13 +724,18 @@ class Analyzer:
         >>> filt.query("fret_a_mass > 500")
         """
         reason_cnt = self._increment_reason_counter(reason)
+        if ex_channel == "both":
+            chan = ("donor", "acceptor")
+        else:
+            chan = (ex_channel,)
 
         # iterate datasets
         for dset in itertools.chain(self.sm_data.values(),
                                     self.special_sm_data.values()):
             # iterate files
             for d in dset.values():
-                for sub in d.values():
+                for c in chan:
+                    sub = d[c]
                     filtered = self._eval(sub, expr, mi_sep)
                     filtered = np.asarray(~filtered, dtype=np.intp)
                     self._update_filter(sub, filtered, reason, reason_cnt)
