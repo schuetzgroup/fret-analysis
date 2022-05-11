@@ -139,7 +139,7 @@ class Analyzer:
     @staticmethod
     def _apply_filters(tracks: pd.DataFrame, include_negative: bool = False,
                        ignore: Union[str, Sequence[str]] = [],
-                       type: str = "data", skip_neighbors: bool = True
+                       type: str = "data", skip_neighbors: bool = False
                        ) -> Union[pd.DataFrame, np.array]:
         """Apply filters to a single DataFrame containing smFRET tracking data
 
@@ -286,7 +286,7 @@ class Analyzer:
         d_tracks["fret", "a_mass"] = a_mass
 
     def calc_apparent_values(self, a_mass_interp: str = "nearest-up",
-                             skip_neighbors: bool = True):
+                             skip_neighbors: bool = False):
         r"""Calculate apparent, FRET-related values
 
         This needs to be called before the filtering methods and before
