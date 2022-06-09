@@ -540,7 +540,7 @@ class TestBaseAnalyzer:
         # This will skip the double mass frame, resulting in constant a_mass
         ana2.sm_data = copy.deepcopy(sm_data)
         ana2.special_sm_data = copy.deepcopy(ssm_data)
-        ana2.calc_apparent_values(a_mass_interp="next")
+        ana2.calc_apparent_values(a_mass_interp="next", skip_neighbors=True)
 
         a_mass = d["acceptor"].loc[idx_2, ("acceptor", "mass")]
 
@@ -777,7 +777,7 @@ class TestBaseAnalyzer:
 
         # First query
         ana1.query("(fret_particle == 1 or acceptor_x == 120) and "
-                   "fret_frame > 3", reason="q1")
+                   "fret_frame > 3", reason="q1", ex_channel="both")
 
         def q1(d):
             m1 = (((d["fret", "particle"] == 1) |
@@ -791,7 +791,7 @@ class TestBaseAnalyzer:
 
         # Second query
         # Make sure that previously filtered entries don't get un-filtered
-        ana1.query("fret_frame > 5", reason="q1")
+        ana1.query("fret_frame > 5", reason="q1", ex_channel="both")
 
         def q2(d):
             m2 = d["fret", "frame"] > 5
@@ -805,7 +805,7 @@ class TestBaseAnalyzer:
 
         # Third query
         # Different reason, should be independent
-        ana1.query("fret_frame > 7", reason="q3")
+        ana1.query("fret_frame > 7", reason="q3", ex_channel="both")
 
         def q3(d):
             m3 = d["fret", "frame"] > 7
@@ -1055,10 +1055,10 @@ class TestBaseAnalyzer:
                         d_a["acceptor"]["acceptor", "signal"], [6, 30])
 
     def test_calc_leakage(self):
-        d = {("fret", "eff_app"): [0.1, 0.1, 0.3, 0.1, 0.1, 0.25],
-             ("fret", "has_neighbor"): [0, 0, 1, 0, 0, 0],
-             ("fret", "frame"): [0, 1, 2, 3, 4, 5],
-             ("filter", "test"): [0, 0, 0, 0, 0, 1]}
+        d = {("fret", "eff_app"): [0.1, 0.1, 0.1, 0.1, 0.25],
+             ("fret", "has_neighbor"): [0, 0, 0, 0, 0],
+             ("fret", "frame"): [0, 1, 2, 3, 4],
+             ("filter", "test"): [0, 0, 0, 0, 1]}
         d = pd.DataFrame(d)
         d2 = d.copy()
         d2["fret", "eff_app"] *= 3
@@ -1073,10 +1073,10 @@ class TestBaseAnalyzer:
         assert ana.leakage == pytest.approx(0.25)
 
     def test_calc_direct_excitation(self):
-        d = {("fret", "frame"): [0, 2, 4, 6],
-             ("fret", "stoi_app"): [0.03, 0.03, 0.6, 0.5],
-             ("fret", "has_neighbor"): [0, 0, 1, 0],
-             ("filter", "test"): [0, 0, 0, 1]}
+        d = {("fret", "frame"): [0, 2, 4],
+             ("fret", "stoi_app"): [0.03, 0.03, 0.5],
+             ("fret", "has_neighbor"): [0, 0, 0],
+             ("filter", "test"): [0, 0, 1]}
         d = pd.DataFrame(d)
         d2 = d.copy()
         d2["fret", "stoi_app"] /= 3
@@ -1090,10 +1090,10 @@ class TestBaseAnalyzer:
         assert ana.direct_excitation == pytest.approx(0.02 / 0.98)
 
     def test_calc_detection_eff(self):
-        d1 = {("donor", "mass"): [0, 0, 0, 4, np.NaN, 6, 6, 6, 6, 9000],
-              ("acceptor", "mass"): [10, 12, 10, 12, 3000, 1, 1, 1, 1, 7000],
-              ("fret", "has_neighbor"): [0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-              ("fret", "a_seg"): [0] * 5 + [1] * 5,
+        d1 = {("donor", "mass"): [0, 0, 0, 4, np.NaN, 6, 6, 6, 6],
+              ("acceptor", "mass"): [10, 12, 10, 12, 3000, 1, 1, 1, 1],
+              ("fret", "has_neighbor"): [0, 0, 0, 0, 0, 0, 0, 0, 0],
+              ("fret", "a_seg"): [0] * 5 + [1] * 4,
               ("filter", "test"): 0}
         d1 = pd.DataFrame(d1)
         d1["fret", "particle"] = 0
@@ -1101,21 +1101,21 @@ class TestBaseAnalyzer:
 
         d2 = d1.copy()
         d2["fret", "particle"] = 1
-        d2["fret", "a_seg"] = [0] * 2 + [1] * 8  # short pre
+        d2["fret", "a_seg"] = [0] * 2 + [1] * 7  # short pre
 
         d3 = d1.copy()
         d3["fret", "particle"] = 2
-        d3["fret", "a_seg"] = [0] * 8 + [1] * 2  # short post
+        d3["fret", "a_seg"] = [0] * 7 + [1] * 2  # short post
 
         d4 = d1.copy()
         d4["fret", "particle"] = 3
-        d4["donor", "mass"] = [1] * 5 + [11] * 5
+        d4["donor", "mass"] = [1] * 5 + [11] * 4
         d4.loc[4, ("acceptor", "mass")] = 11
 
         d5 = d1.copy()
         d5["fret", "particle"] = 4
-        d5["donor", "mass"] = [np.NaN] * 5 + [10] * 5
-        d5["acceptor", "mass"] = [10] * 5 + [np.NaN] * 5
+        d5["donor", "mass"] = [np.NaN] * 5 + [10] * 4
+        d5["acceptor", "mass"] = [10] * 5 + [np.NaN] * 4
 
         # Test filtering
         d6 = d1.copy()
