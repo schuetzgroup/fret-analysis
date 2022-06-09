@@ -2,5 +2,6 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from .tracker import Tracker, IntermolecularTracker  # noqa: E401
 from .analyzer import Analyzer, DensityPlots  # noqa: E401
+from .plotter import Plotter  # noqa: E401
+from .tracker import Tracker, IntermolecularTracker  # noqa: E401

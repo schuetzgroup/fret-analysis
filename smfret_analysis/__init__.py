@@ -2,7 +2,5 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from .data_store import DataStore
-from .version import *
-from .plotter import Plotter
-from .inspector import Inspector
+from .data_store import DataStore  # noqa: E401
+from .version import *  # noqa: E401
