@@ -4,4 +4,6 @@
 
 from .analyzer import Analyzer  # noqa: E401
 from .plotter import Plotter  # noqa: E401
-from .tracker import Tracker, IntermolecularTracker  # noqa: E401
+from .tracker_base import BaseTracker  # noqa: E401
+from .tracker_inter import IntermolecularTracker  # noqa: E401
+from .tracker_intra import IntramolecularTracker  # noqa: E401

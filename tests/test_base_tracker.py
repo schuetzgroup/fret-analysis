@@ -17,7 +17,7 @@ from smfret_analysis import base
 class TestBaseTracker:
     def test_excitation_seq(self):
         seq = "sdddax"
-        tr = base.Tracker(seq)
+        tr = base.BaseTracker(seq)
         assert tr.excitation_seq == seq
         assert tr.frame_selector.excitation_seq == seq
 
@@ -43,7 +43,7 @@ class TestBaseTracker:
         exp_two_src = dict(enumerate(zip(good_files_d, good_files_a)))
 
         # test _get_files()
-        tr = base.Tracker(data_dir=tmp_path)
+        tr = base.BaseTracker(data_dir=tmp_path)
         assert tr._get_files(re_d) == exp_one_src
         assert tr._get_files(re_d, re_a) == exp_two_src
         assert tr._get_files(re_no_match) == {}
@@ -83,7 +83,7 @@ class TestBaseTracker:
         imageio.mimwrite(tmp_path / "img1.tif", ims1)
         imageio.mimwrite(tmp_path / "img2.tif", ims2)
 
-        tr = base.Tracker(data_dir=tmp_path)
+        tr = base.BaseTracker(data_dir=tmp_path)
         # Without ROIs, single source
         ims, to_close = tr._open_image_sequence("img1.tif")
         assert "donor" in ims
@@ -153,7 +153,7 @@ class TestBaseTracker:
         imageio.mimwrite(tmp_path / "beads1.tif", [imgs[0], imgs[1]])
         imageio.mimwrite(tmp_path / "beads2.tif", [imgs[2]])
 
-        tr = base.Tracker(data_dir=tmp_path)
+        tr = base.BaseTracker(data_dir=tmp_path)
         tr.rois = {"donor": d_roi, "acceptor": a_roi}
         tr.add_special_dataset("registration", r"beads\d\.tif")
         lo = {"algorithm": "Crocker-Grier",
@@ -186,7 +186,7 @@ class TestBaseTracker:
             [sim.simulate_gauss(img_shape[::-1], c2, 200, 1, engine="python")
              for c2 in coords[1]])
 
-        tr = base.Tracker("da")
+        tr = base.BaseTracker("da")
         tr.registrator.parameters1 = channel_transform
         tr.registrator.parameters2 = np.linalg.inv(channel_transform)
 
@@ -215,7 +215,7 @@ class TestBaseTracker:
         img_aa = sim.simulate_gauss(img_shape[::-1], coords[1][1], 1300, 1,
                                     mass=True, engine="python") + 200
 
-        tr = base.Tracker("da")
+        tr = base.BaseTracker("da")
         tr.registrator.parameters1 = channel_transform
         tr.registrator.parameters2 = np.linalg.inv(channel_transform)
         lo = {"algorithm": "Crocker-Grier",
@@ -320,7 +320,7 @@ class TestBaseTracker:
         imageio.mimwrite(tmp_path / "split_don.tif", [d_roi(i) for i in imgs])
         imageio.mimwrite(tmp_path / "split_acc.tif", [a_roi(i) for i in imgs])
 
-        tr = base.Tracker("da", data_dir=tmp_path)
+        tr = base.BaseTracker("da", data_dir=tmp_path)
         tr.registrator.parameters1 = channel_transform
         tr.registrator.parameters2 = np.linalg.inv(channel_transform)
         lo = {"algorithm": "Crocker-Grier",
@@ -369,7 +369,7 @@ class TestBaseTracker:
             imageio.mimwrite(tmp_path / f"split{n+1}_acc.tif",
                              [a_roi(i) for i in ims])
 
-        tr = base.Tracker("da", data_dir=tmp_path)
+        tr = base.BaseTracker("da", data_dir=tmp_path)
         tr.registrator.parameters1 = channel_transform
         tr.registrator.parameters2 = np.linalg.inv(channel_transform)
         lo = {"algorithm": "Crocker-Grier",
@@ -421,6 +421,294 @@ class TestBaseTracker:
                      for k1, k2, bg in special_sm_desc)):
                 self._check_locate_result(res, coords, 1300, 2000, 0, 1300, bg)
 
+    def test_extract_segment_images(self, tmp_path):
+        tr = base.BaseTracker("sxs", data_dir=tmp_path)
+        tr.sources = {"data1": {0: "f1.tif", 1: "f2.tif"},
+                      "data2": {3: "f3.tif"}}
+        tr.rois = {"donor": roi.ROI((0, 0), (2, 2)),
+                   "acceptor": roi.ROI((2, 0), (3, 2))}
+
+        for i in range(1, 4):
+            ims = np.array([np.full((2, 3), i * j) for j in range(10, 31, 10)])
+            ims[:, :, 2] += 1
+            imageio.mimwrite(tmp_path / f"f{i}.tif", ims)
+
+        def check_results(actual, desired):
+            assert actual.keys() == desired.keys()
+            for k in actual.keys():
+                a = actual[k]
+                d = desired[k]
+
+                assert a.keys() == d.keys()
+                for k2 in a.keys():
+                    np.testing.assert_equal(a[k2], d[k2])
+
+        tr.extract_segment_images("s", "donor")
+        exp = {"data1": {0: np.array([np.full((2, 2), 10),
+                                      np.full((2, 2), 30)]),
+                         1: np.array([np.full((2, 2), 20),
+                                      np.full((2, 2), 60)])},
+               "data2": {3: np.array([np.full((2, 2), 30),
+                                      np.full((2, 2), 90)])}}
+        check_results(tr.segment_images, exp)
+        tr.extract_segment_images("s", "acceptor")
+        exp = {"data1": {0: np.array([np.full((2, 1), 11),
+                                      np.full((2, 1), 31)]),
+                         1: np.array([np.full((2, 1), 21),
+                                      np.full((2, 1), 61)])},
+               "data2": {3: np.array([np.full((2, 1), 31),
+                                      np.full((2, 1), 91)])}}
+        check_results(tr.segment_images, exp)
+        tr.extract_segment_images("x", "donor")
+        exp = {"data1": {0: np.full((1, 2, 2), 20),
+                         1: np.full((1, 2, 2), 40)},
+               "data2": {3: np.full((1, 2, 2), 60)}}
+        check_results(tr.segment_images, exp)
+        tr.extract_segment_images("x", "acceptor")
+        exp = {"data1": {0: np.full((1, 2, 1), 21),
+                         1: np.full((1, 2, 1), 41)},
+               "data2": {3: np.full((1, 2, 1), 61)}}
+        check_results(tr.segment_images, exp)
+
+    def test_make_flatfield(self, tmp_path):
+        tr = base.BaseTracker("da", data_dir=tmp_path)
+        tr.special_sources["donor-profile"] = {0: "d1.tif", 1: "d2.tif"}
+        tr.special_sources["acceptor-profile"] = {0: "a1.tif", 1: "a2.tif"}
+        tr.flatfield_options["bg"] = 15
+        tr.flatfield_options["smooth_sigma"] = 0
+        tr.rois = {"donor": roi.ROI((0, 0), size=(4, 4)),
+                   "acceptor": roi.ROI((4, 0), size=(4, 4))}
+        tr.registrator.parameters1 = np.array([[1, 0, 1],
+                                               [0, 1, 0],
+                                               [0, 0, 1]])
+        tr.registrator.parameters2 = np.array([[1, 0, -1],
+                                               [0, 1, 0],
+                                               [0, 0, 1]])
+
+        ims_d1 = np.empty((2, 4, 8), dtype=float)
+        ims_d1[0, :, :2] = 1
+        ims_d1[0, :, 2:4] = 2
+        ims_d1[1, :, :2] = 2
+        ims_d1[1, :, 2:4] = 1
+        ims_d1[0, :2, 4:] = 1
+        ims_d1[0, 2:, 4:] = 2
+        ims_d1[1, :2, 4:] = 2
+        ims_d1[1, 2:, 4:] = 1
+        ims_d1 += 15
+        imageio.mimwrite(tmp_path / "d1.tif", ims_d1)
+        ims_d2 = ims_d1 + 1
+        imageio.mimwrite(tmp_path / "d2.tif", ims_d2)
+        imageio.mimwrite(tmp_path / "a1.tif", ims_d1[::-1, ...])
+        imageio.mimwrite(tmp_path / "a2.tif", ims_d2[::-1, ...])
+
+        exp_f0 = np.array([[(0.5 + 2/3) / 2] * 4] * 2 + [[1.0] * 4] * 2).T
+        tr.make_flatfield("donor", frame=0)
+        np.testing.assert_allclose(tr.flatfield["donor"].corr_img, exp_f0)
+        tr.make_flatfield("donor", frame="all")
+        np.testing.assert_allclose(tr.flatfield["donor"].corr_img,
+                                   np.ones((4, 4)))
+        tr.make_flatfield("donor", frame=[0])
+        np.testing.assert_allclose(tr.flatfield["donor"].corr_img, exp_f0)
+        tr.make_flatfield("donor", frame=[0, 1])
+        np.testing.assert_allclose(tr.flatfield["donor"].corr_img,
+                                   np.ones((4, 4)))
+        # Acceptor emission is (here) the transposed of donor emission
+        # Due to the image registration transform, the rightmost column is
+        # filled with the mean of the mean values
+        exp_f0_tr = exp_f0.T.copy()
+        exp_f0_tr[:, -1] = (1.5 / 2 + 2.5 / 3) / 2
+        tr.make_flatfield("donor", frame=0, emission="acceptor")
+        np.testing.assert_allclose(tr.flatfield["donor"].corr_img, exp_f0_tr)
+        exp_f0_a = exp_f0.T[::-1, :]
+        tr.make_flatfield("acceptor", frame=0)
+        np.testing.assert_allclose(tr.flatfield["acceptor"].corr_img, exp_f0_a)
+        tr.make_flatfield("acceptor", frame="all")
+        np.testing.assert_allclose(tr.flatfield["acceptor"].corr_img,
+                                   np.ones((4, 4)))
+        tr.make_flatfield("acceptor", frame=[0])
+        np.testing.assert_allclose(tr.flatfield["acceptor"].corr_img, exp_f0_a)
+        tr.make_flatfield("acceptor", frame=[0, 1])
+        np.testing.assert_allclose(tr.flatfield["acceptor"].corr_img,
+                                   np.ones((4, 4)))
+
+    def test_make_flatfield_sm(self):
+        tr = base.BaseTracker("da")
+        tr.rois = {"donor": roi.ROI((5, 2), size=(25, 21)),
+                   "acceptor": roi.ROI((7, 3), size=(25, 21))}
+
+        x, y = np.mgrid[0.0:25.0, 0.0:21.0].reshape((2, -1))
+
+        # Generate donor excitation data
+        center_d = (12, 10)
+        sigma_d = (3, 2)
+        mass_d = funcs.gaussian_2d(x, y, amplitude=1, center=center_d,
+                                   sigma=sigma_d)
+        d0 = pd.DataFrame({"x": x, "y": y, "mass": mass_d})
+        a0 = pd.DataFrame({"x": x, "y": y, "mass": 2 * mass_d})
+        s0 = pd.concat({"donor": d0, "acceptor": a0}, axis=1)
+        s0["fret", "has_neighbor"] = 0
+        s1 = s0.copy()
+        s0["fret", "frame"] = 0
+        s1["fret", "frame"] = 2
+        s1[[("donor", "mass"), ("acceptor", "mass")]] *= 2
+        d1d = pd.concat([s0, s1], ignore_index=True)
+        s0[[("donor", "mass"), ("acceptor", "mass")]] *= 2
+        s1[[("donor", "mass"), ("acceptor", "mass")]] *= 3 / 2
+        d2d = pd.concat([s0, s1], ignore_index=True)
+
+        # Generate acceptor excitation data
+        center_a = (10, 9)
+        sigma_a = (4, 3)
+        mass_a = funcs.gaussian_2d(x, y, amplitude=2, center=center_a,
+                                   sigma=sigma_a)
+        d0 = pd.DataFrame({"x": x, "y": y, "mass": mass_a})
+        a0 = pd.DataFrame({"x": x, "y": y, "mass": 2 * mass_a})
+        s0 = pd.concat({"donor": d0, "acceptor": a0}, axis=1)
+        s0["fret", "has_neighbor"] = 0
+        s1 = s0.copy()
+        s0["fret", "frame"] = 1
+        s1["fret", "frame"] = 3
+        s1[[("donor", "mass"), ("acceptor", "mass")]] *= 2
+        d1a = pd.concat([s0, s1], ignore_index=True)
+        s0[[("donor", "mass"), ("acceptor", "mass")]] *= 2
+        s1[[("donor", "mass"), ("acceptor", "mass")]] *= 3 / 2
+        d2a = pd.concat([s0, s1], ignore_index=True)
+
+        tr.sm_data["d1"] = {"donor": d1d, "acceptor": d1a}
+        tr.sm_data["d2"] = {"donor": d2d, "acceptor": d2a}
+
+        def check_fit_result(actual, desired):
+            assert actual.keys() == desired.keys()
+            for k in desired.keys():
+                np.testing.assert_allclose(actual[k], desired[k], atol=1e-3)
+
+        # d1, frame 0: d amp = 1, a amp = 2 ==> amp = 3
+        # d2, frame 0: d amp = 2, a amp = 4 ==> amp = 6
+        exp_d = {"amplitude": 4.5, "center": center_d, "sigma": sigma_d,
+                 "rotation": 0, "offset": 0}
+        tr.make_flatfield_sm("donor")
+        check_fit_result(tr.flatfield["donor"].fit_result, exp_d)
+        # d1, frame 2: d amp = 2, a amp = 4 ==> amp = 6
+        # d2, frame 2: d amp = 3, a amp = 6 ==> amp = 9
+        exp_d["amplitude"] = 7.5
+        tr.make_flatfield_sm("donor", frame=2)
+        check_fit_result(tr.flatfield["donor"].fit_result, exp_d)
+        exp_d["amplitude"] = 3
+        tr.make_flatfield_sm("donor", keys=["d1"])
+        check_fit_result(tr.flatfield["donor"].fit_result, exp_d)
+        # d1, frame 1: a amp = 4
+        # d2, frame 1: a amp = 8
+        exp_a = {"amplitude": 6.0, "center": center_a, "sigma": sigma_a,
+                 "rotation": 0, "offset": 0}
+        tr.make_flatfield_sm("acceptor")
+        check_fit_result(tr.flatfield["acceptor"].fit_result, exp_a)
+        # d1, frame 3: a amp = 8
+        # d2, frame 3: a amp = 12
+        exp_a["amplitude"] = 10
+        tr.make_flatfield_sm("acceptor", frame=3)
+        check_fit_result(tr.flatfield["acceptor"].fit_result, exp_a)
+        exp_a["amplitude"] = 8
+        tr.make_flatfield_sm("acceptor", keys=["d2"])
+        check_fit_result(tr.flatfield["acceptor"].fit_result, exp_a)
+
+    @pytest.fixture
+    def loc_data(self):
+        d_loc = pd.DataFrame({("acceptor", "x"): [0.0, 2, 0, 2, 0, 2],
+                              ("acceptor", "y"): [0.0, 0, 2, 2, 4, 5],
+                              ("fret", "frame"): [0, 0, 2, 2, 4, 6],
+                              ("fret", "bla"): 111})
+        d_loc["donor", "x"] = d_loc["acceptor", "x"]
+        d_loc["donor", "y"] = d_loc["acceptor", "y"]
+        a_loc = pd.DataFrame({("acceptor", "x"): [0.0, 0, 0, 2, 2, 2],
+                              ("acceptor", "y"): [1.0, 3, 5, 1, 3, 4],
+                              ("fret", "frame"): [1, 3, 5, 1, 3, 5]})
+        a_loc["donor", "x"] = a_loc["acceptor", "x"]
+        a_loc["donor", "y"] = a_loc["acceptor", "y"]
+
+        return {"donor": d_loc.copy(), "acceptor": a_loc.copy()}
+
+    def test_save_load(self, tmp_path, channel_transform, loc_data):
+        tr = base.BaseTracker("dda", data_dir=tmp_path)
+        tr.rois = {"donor": roi.ROI([5, 2], bottom_right=[30, 23]),
+                   "acceptor": roi.ROI([7, 3], bottom_right=[32, 24])}
+        tr.registrator.parameters1 = channel_transform
+        tr.registrator.parameters2 = np.linalg.inv(channel_transform)
+        lo = {"algorithm": "Crocker-Grier",
+              "options": {"radius": 3, "signal_thresh": 400,
+                          "mass_thresh": 1000}}
+        tr.locate_options["donor"] = lo.copy()
+        lo["options"]["signal_thresh"] = 120
+        tr.locate_options["acceptor"] = lo.copy()
+        tr.brightness_options = {"radius": 4, "bg_frame": 3, "mask": "circle"}
+        tr.link_options = {"search_range": 1.5, "memory": 0}
+        tr.sources = {"data1": {0: "f1.tif", 1: "f2.tif"},
+                      "data2": {3: "f3.tif"}}
+        tr.special_sources = {"donor-only": {0: "f4.tif"}}
+        tr.sm_data = {"data1": {i: copy.deepcopy(loc_data) for i in (0, 1)},
+                      "data2": {3: copy.deepcopy(loc_data)}}
+        tr.sm_data["data1"][1]["donor"].loc[0, ("donor", "x")] = -5
+        tr.sm_data["data2"][3]["acceptor"].loc[0, ("donor", "x")] = -3
+        tr.special_sm_data = {"donor-only": {0: copy.deepcopy(loc_data)}}
+        tr.special_sm_data["donor-only"][0]["donor"].loc[
+            5, ("fret", "frame")] = 4
+        tr.flatfield_options["bg"] = 15
+        tr.flatfield_options["smooth_sigma"] = 0
+        tr.neighbor_distance = 2
+        tr.flatfield["donor"] = flatfield.Corrector(
+            np.arange(1, 31).reshape((5, -1)), gaussian_fit=False)
+        tr.flatfield["acceptor"] = flatfield.Corrector(
+            np.arange(1, 31)[::-1].reshape((5, -1)), gaussian_fit=False)
+        tr.segment_images = {"data1": {0: np.array([np.full((2, 2), 10),
+                                                    np.full((2, 2), 30)]),
+                                       1: np.array([np.full((2, 2), 20),
+                                                    np.full((2, 2), 60)])},
+                             "data2": {3: np.array([np.full((2, 2), 30),
+                                                    np.full((2, 2), 90)])}}
+
+        check_attrs = (list(filter(lambda x: not x.startswith("_"),
+                                   tr.__dict__.keys())) +
+                       tr.trait_names())
+        check_attrs.append("excitation_seq")
+
+        with io.chdir(tmp_path):
+            tr.save()
+            tr_l = base.BaseTracker.load()
+
+        check_attrs.remove("frame_selector")
+        assert (tr_l.frame_selector.excitation_seq ==
+                tr.frame_selector.excitation_seq)
+        for a in ("sm_data", "special_sm_data"):
+            check_attrs.remove(a)
+            sm_l = getattr(tr_l, a)
+            sm = getattr(tr, a)
+            assert sm_l.keys() == sm.keys()
+            for k in sm_l.keys():
+                v_l = sm_l[k]
+                v = sm[k]
+                assert v_l.keys() == v.keys()
+                for fid in v_l.keys():
+                    pd.testing.assert_frame_equal(
+                        v_l[fid]["donor"], v[fid]["donor"])
+                    pd.testing.assert_frame_equal(
+                        v_l[fid]["acceptor"], v[fid]["acceptor"])
+        check_attrs.remove("flatfield")
+        np.testing.assert_allclose(tr_l.flatfield["donor"].corr_img,
+                                   tr.flatfield["donor"].corr_img)
+        np.testing.assert_allclose(tr_l.flatfield["acceptor"].corr_img,
+                                   tr.flatfield["acceptor"].corr_img)
+        check_attrs.remove("segment_images")
+        assert tr_l.segment_images.keys() == tr.segment_images.keys()
+        for k in tr_l.segment_images.keys():
+            v_l = tr_l.segment_images[k]
+            v = tr.segment_images[k]
+            assert v_l.keys() == v.keys()
+            for fid in v_l.keys():
+                np.testing.assert_allclose(v_l[fid], v[fid])
+        for a in check_attrs:
+            assert getattr(tr_l, a) == getattr(tr, a)
+
+
+class TestIntramolecularTracker:
     @pytest.fixture
     def loc_data(self):
         d_loc = pd.DataFrame({("acceptor", "x"): [0.0, 2, 0, 2, 0, 2],
@@ -438,7 +726,7 @@ class TestBaseTracker:
         return {"donor": d_loc.copy(), "acceptor": a_loc.copy()}
 
     def test_track_video(self, loc_data):
-        tr = base.Tracker("da")
+        tr = base.IntramolecularTracker("da")
 
         tr.link_options = {"search_range": 1.5, "memory": 0}
         sm_data = {k: v.copy() for k, v in loc_data.items()}
@@ -463,7 +751,7 @@ class TestBaseTracker:
         pd.testing.assert_frame_equal(sm_data["acceptor"], a_exp)
 
     def test_track_all(self, loc_data):
-        tr = base.Tracker("da")
+        tr = base.IntramolecularTracker("da")
         tr.link_options = {"search_range": 1.5, "memory": 0}
         tr.sources = {"data1": {0: "f1.tif", 1: "f2.tif"},
                       "data2": {3: "f3.tif"}}
@@ -595,7 +883,7 @@ class TestBaseTracker:
         loc_data["donor"].drop(index=2, inplace=True)
         loc_data["acceptor"].drop(index=1, inplace=True)
 
-        tr = base.Tracker("da", tmp_path)
+        tr = base.IntramolecularTracker("da", tmp_path)
         tr.brightness_options = {"radius": 1, "bg_frame": 1}
         tr.neighbor_distance = 2
 
@@ -628,7 +916,7 @@ class TestBaseTracker:
                                       a_exp_s)
 
     def test_interpolate_missing_all(self, loc_data, tmp_path):
-        tr = base.Tracker("da", tmp_path)
+        tr = base.IntramolecularTracker("da", tmp_path)
         tr.brightness_options = {"radius": 1, "bg_frame": 1}
         tr.neighbor_distance = 2
         tr.sources = {"data1": {0: "f1.tif", 1: "f2.tif"},
@@ -723,278 +1011,8 @@ class TestBaseTracker:
             pd.testing.assert_frame_equal(v["acceptor"].sort_index(axis=1),
                                           a_exp)
 
-    def test_extract_segment_images(self, tmp_path):
-        tr = base.Tracker("sxs", data_dir=tmp_path)
-        tr.sources = {"data1": {0: "f1.tif", 1: "f2.tif"},
-                      "data2": {3: "f3.tif"}}
-        tr.rois = {"donor": roi.ROI((0, 0), (2, 2)),
-                   "acceptor": roi.ROI((2, 0), (3, 2))}
 
-        for i in range(1, 4):
-            ims = np.array([np.full((2, 3), i * j) for j in range(10, 31, 10)])
-            ims[:, :, 2] += 1
-            imageio.mimwrite(tmp_path / f"f{i}.tif", ims)
-
-        def check_results(actual, desired):
-            assert actual.keys() == desired.keys()
-            for k in actual.keys():
-                a = actual[k]
-                d = desired[k]
-
-                assert a.keys() == d.keys()
-                for k2 in a.keys():
-                    np.testing.assert_equal(a[k2], d[k2])
-
-        tr.extract_segment_images("s", "donor")
-        exp = {"data1": {0: np.array([np.full((2, 2), 10),
-                                      np.full((2, 2), 30)]),
-                         1: np.array([np.full((2, 2), 20),
-                                      np.full((2, 2), 60)])},
-               "data2": {3: np.array([np.full((2, 2), 30),
-                                      np.full((2, 2), 90)])}}
-        check_results(tr.segment_images, exp)
-        tr.extract_segment_images("s", "acceptor")
-        exp = {"data1": {0: np.array([np.full((2, 1), 11),
-                                      np.full((2, 1), 31)]),
-                         1: np.array([np.full((2, 1), 21),
-                                      np.full((2, 1), 61)])},
-               "data2": {3: np.array([np.full((2, 1), 31),
-                                      np.full((2, 1), 91)])}}
-        check_results(tr.segment_images, exp)
-        tr.extract_segment_images("x", "donor")
-        exp = {"data1": {0: np.full((1, 2, 2), 20),
-                         1: np.full((1, 2, 2), 40)},
-               "data2": {3: np.full((1, 2, 2), 60)}}
-        check_results(tr.segment_images, exp)
-        tr.extract_segment_images("x", "acceptor")
-        exp = {"data1": {0: np.full((1, 2, 1), 21),
-                         1: np.full((1, 2, 1), 41)},
-               "data2": {3: np.full((1, 2, 1), 61)}}
-        check_results(tr.segment_images, exp)
-
-    def test_make_flatfield(self, tmp_path):
-        tr = base.Tracker("da", data_dir=tmp_path)
-        tr.special_sources["donor-profile"] = {0: "d1.tif", 1: "d2.tif"}
-        tr.special_sources["acceptor-profile"] = {0: "a1.tif", 1: "a2.tif"}
-        tr.flatfield_options["bg"] = 15
-        tr.flatfield_options["smooth_sigma"] = 0
-        tr.rois = {"donor": roi.ROI((0, 0), size=(4, 4)),
-                   "acceptor": roi.ROI((4, 0), size=(4, 4))}
-        tr.registrator.parameters1 = np.array([[1, 0, 1],
-                                               [0, 1, 0],
-                                               [0, 0, 1]])
-        tr.registrator.parameters2 = np.array([[1, 0, -1],
-                                               [0, 1, 0],
-                                               [0, 0, 1]])
-
-        ims_d1 = np.empty((2, 4, 8), dtype=float)
-        ims_d1[0, :, :2] = 1
-        ims_d1[0, :, 2:4] = 2
-        ims_d1[1, :, :2] = 2
-        ims_d1[1, :, 2:4] = 1
-        ims_d1[0, :2, 4:] = 1
-        ims_d1[0, 2:, 4:] = 2
-        ims_d1[1, :2, 4:] = 2
-        ims_d1[1, 2:, 4:] = 1
-        ims_d1 += 15
-        imageio.mimwrite(tmp_path / "d1.tif", ims_d1)
-        ims_d2 = ims_d1 + 1
-        imageio.mimwrite(tmp_path / "d2.tif", ims_d2)
-        imageio.mimwrite(tmp_path / "a1.tif", ims_d1[::-1, ...])
-        imageio.mimwrite(tmp_path / "a2.tif", ims_d2[::-1, ...])
-
-        exp_f0 = np.array([[(0.5 + 2/3) / 2] * 4] * 2 + [[1.0] * 4] * 2).T
-        tr.make_flatfield("donor", frame=0)
-        np.testing.assert_allclose(tr.flatfield["donor"].corr_img, exp_f0)
-        tr.make_flatfield("donor", frame="all")
-        np.testing.assert_allclose(tr.flatfield["donor"].corr_img,
-                                   np.ones((4, 4)))
-        tr.make_flatfield("donor", frame=[0])
-        np.testing.assert_allclose(tr.flatfield["donor"].corr_img, exp_f0)
-        tr.make_flatfield("donor", frame=[0, 1])
-        np.testing.assert_allclose(tr.flatfield["donor"].corr_img,
-                                   np.ones((4, 4)))
-        # Acceptor emission is (here) the transposed of donor emission
-        # Due to the image registration transform, the rightmost column is
-        # filled with the mean of the mean values
-        exp_f0_tr = exp_f0.T.copy()
-        exp_f0_tr[:, -1] = (1.5 / 2 + 2.5 / 3) / 2
-        tr.make_flatfield("donor", frame=0, emission="acceptor")
-        np.testing.assert_allclose(tr.flatfield["donor"].corr_img, exp_f0_tr)
-        exp_f0_a = exp_f0.T[::-1, :]
-        tr.make_flatfield("acceptor", frame=0)
-        np.testing.assert_allclose(tr.flatfield["acceptor"].corr_img, exp_f0_a)
-        tr.make_flatfield("acceptor", frame="all")
-        np.testing.assert_allclose(tr.flatfield["acceptor"].corr_img,
-                                   np.ones((4, 4)))
-        tr.make_flatfield("acceptor", frame=[0])
-        np.testing.assert_allclose(tr.flatfield["acceptor"].corr_img, exp_f0_a)
-        tr.make_flatfield("acceptor", frame=[0, 1])
-        np.testing.assert_allclose(tr.flatfield["acceptor"].corr_img,
-                                   np.ones((4, 4)))
-
-    def test_make_flatfield_sm(self):
-        tr = base.Tracker("da")
-        tr.rois = {"donor": roi.ROI((5, 2), size=(25, 21)),
-                   "acceptor": roi.ROI((7, 3), size=(25, 21))}
-
-        x, y = np.mgrid[0.0:25.0, 0.0:21.0].reshape((2, -1))
-
-        # Generate donor excitation data
-        center_d = (12, 10)
-        sigma_d = (3, 2)
-        mass_d = funcs.gaussian_2d(x, y, amplitude=1, center=center_d,
-                                   sigma=sigma_d)
-        d0 = pd.DataFrame({"x": x, "y": y, "mass": mass_d})
-        a0 = pd.DataFrame({"x": x, "y": y, "mass": 2 * mass_d})
-        s0 = pd.concat({"donor": d0, "acceptor": a0}, axis=1)
-        s0["fret", "has_neighbor"] = 0
-        s1 = s0.copy()
-        s0["fret", "frame"] = 0
-        s1["fret", "frame"] = 2
-        s1[[("donor", "mass"), ("acceptor", "mass")]] *= 2
-        d1d = pd.concat([s0, s1], ignore_index=True)
-        s0[[("donor", "mass"), ("acceptor", "mass")]] *= 2
-        s1[[("donor", "mass"), ("acceptor", "mass")]] *= 3 / 2
-        d2d = pd.concat([s0, s1], ignore_index=True)
-
-        # Generate acceptor excitation data
-        center_a = (10, 9)
-        sigma_a = (4, 3)
-        mass_a = funcs.gaussian_2d(x, y, amplitude=2, center=center_a,
-                                   sigma=sigma_a)
-        d0 = pd.DataFrame({"x": x, "y": y, "mass": mass_a})
-        a0 = pd.DataFrame({"x": x, "y": y, "mass": 2 * mass_a})
-        s0 = pd.concat({"donor": d0, "acceptor": a0}, axis=1)
-        s0["fret", "has_neighbor"] = 0
-        s1 = s0.copy()
-        s0["fret", "frame"] = 1
-        s1["fret", "frame"] = 3
-        s1[[("donor", "mass"), ("acceptor", "mass")]] *= 2
-        d1a = pd.concat([s0, s1], ignore_index=True)
-        s0[[("donor", "mass"), ("acceptor", "mass")]] *= 2
-        s1[[("donor", "mass"), ("acceptor", "mass")]] *= 3 / 2
-        d2a = pd.concat([s0, s1], ignore_index=True)
-
-        tr.sm_data["d1"] = {"donor": d1d, "acceptor": d1a}
-        tr.sm_data["d2"] = {"donor": d2d, "acceptor": d2a}
-
-        def check_fit_result(actual, desired):
-            assert actual.keys() == desired.keys()
-            for k in desired.keys():
-                np.testing.assert_allclose(actual[k], desired[k], atol=1e-3)
-
-        # d1, frame 0: d amp = 1, a amp = 2 ==> amp = 3
-        # d2, frame 0: d amp = 2, a amp = 4 ==> amp = 6
-        exp_d = {"amplitude": 4.5, "center": center_d, "sigma": sigma_d,
-                 "rotation": 0, "offset": 0}
-        tr.make_flatfield_sm("donor")
-        check_fit_result(tr.flatfield["donor"].fit_result, exp_d)
-        # d1, frame 2: d amp = 2, a amp = 4 ==> amp = 6
-        # d2, frame 2: d amp = 3, a amp = 6 ==> amp = 9
-        exp_d["amplitude"] = 7.5
-        tr.make_flatfield_sm("donor", frame=2)
-        check_fit_result(tr.flatfield["donor"].fit_result, exp_d)
-        exp_d["amplitude"] = 3
-        tr.make_flatfield_sm("donor", keys=["d1"])
-        check_fit_result(tr.flatfield["donor"].fit_result, exp_d)
-        # d1, frame 1: a amp = 4
-        # d2, frame 1: a amp = 8
-        exp_a = {"amplitude": 6.0, "center": center_a, "sigma": sigma_a,
-                 "rotation": 0, "offset": 0}
-        tr.make_flatfield_sm("acceptor")
-        check_fit_result(tr.flatfield["acceptor"].fit_result, exp_a)
-        # d1, frame 3: a amp = 8
-        # d2, frame 3: a amp = 12
-        exp_a["amplitude"] = 10
-        tr.make_flatfield_sm("acceptor", frame=3)
-        check_fit_result(tr.flatfield["acceptor"].fit_result, exp_a)
-        exp_a["amplitude"] = 8
-        tr.make_flatfield_sm("acceptor", keys=["d2"])
-        check_fit_result(tr.flatfield["acceptor"].fit_result, exp_a)
-
-    def test_save_load(self, tmp_path, channel_transform, loc_data):
-        tr = base.Tracker("dda", data_dir=tmp_path)
-        tr.rois = {"donor": roi.ROI([5, 2], bottom_right=[30, 23]),
-                   "acceptor": roi.ROI([7, 3], bottom_right=[32, 24])}
-        tr.registrator.parameters1 = channel_transform
-        tr.registrator.parameters2 = np.linalg.inv(channel_transform)
-        lo = {"algorithm": "Crocker-Grier",
-              "options": {"radius": 3, "signal_thresh": 400,
-                          "mass_thresh": 1000}}
-        tr.locate_options["donor"] = lo.copy()
-        lo["options"]["signal_thresh"] = 120
-        tr.locate_options["acceptor"] = lo.copy()
-        tr.brightness_options = {"radius": 4, "bg_frame": 3, "mask": "circle"}
-        tr.link_options = {"search_range": 1.5, "memory": 0}
-        tr.sources = {"data1": {0: "f1.tif", 1: "f2.tif"},
-                      "data2": {3: "f3.tif"}}
-        tr.special_sources = {"donor-only": {0: "f4.tif"}}
-        tr.sm_data = {"data1": {i: copy.deepcopy(loc_data) for i in (0, 1)},
-                      "data2": {3: copy.deepcopy(loc_data)}}
-        tr.sm_data["data1"][1]["donor"].loc[0, ("donor", "x")] = -5
-        tr.sm_data["data2"][3]["acceptor"].loc[0, ("donor", "x")] = -3
-        tr.special_sm_data = {"donor-only": {0: copy.deepcopy(loc_data)}}
-        tr.special_sm_data["donor-only"][0]["donor"].loc[
-            5, ("fret", "frame")] = 4
-        tr.flatfield_options["bg"] = 15
-        tr.flatfield_options["smooth_sigma"] = 0
-        tr.neighbor_distance = 2
-        tr.flatfield["donor"] = flatfield.Corrector(
-            np.arange(1, 31).reshape((5, -1)), gaussian_fit=False)
-        tr.flatfield["acceptor"] = flatfield.Corrector(
-            np.arange(1, 31)[::-1].reshape((5, -1)), gaussian_fit=False)
-        tr.segment_images = {"data1": {0: np.array([np.full((2, 2), 10),
-                                                    np.full((2, 2), 30)]),
-                                       1: np.array([np.full((2, 2), 20),
-                                                    np.full((2, 2), 60)])},
-                             "data2": {3: np.array([np.full((2, 2), 30),
-                                                    np.full((2, 2), 90)])}}
-
-        check_attrs = (list(filter(lambda x: not x.startswith("_"),
-                                   tr.__dict__.keys())) +
-                       tr.trait_names())
-        check_attrs.append("excitation_seq")
-
-        with io.chdir(tmp_path):
-            tr.save()
-            tr_l = base.Tracker.load()
-
-        check_attrs.remove("frame_selector")
-        assert (tr_l.frame_selector.excitation_seq ==
-                tr.frame_selector.excitation_seq)
-        for a in ("sm_data", "special_sm_data"):
-            check_attrs.remove(a)
-            sm_l = getattr(tr_l, a)
-            sm = getattr(tr, a)
-            assert sm_l.keys() == sm.keys()
-            for k in sm_l.keys():
-                v_l = sm_l[k]
-                v = sm[k]
-                assert v_l.keys() == v.keys()
-                for fid in v_l.keys():
-                    pd.testing.assert_frame_equal(
-                        v_l[fid]["donor"], v[fid]["donor"])
-                    pd.testing.assert_frame_equal(
-                        v_l[fid]["acceptor"], v[fid]["acceptor"])
-        check_attrs.remove("flatfield")
-        np.testing.assert_allclose(tr_l.flatfield["donor"].corr_img,
-                                   tr.flatfield["donor"].corr_img)
-        np.testing.assert_allclose(tr_l.flatfield["acceptor"].corr_img,
-                                   tr.flatfield["acceptor"].corr_img)
-        check_attrs.remove("segment_images")
-        assert tr_l.segment_images.keys() == tr.segment_images.keys()
-        for k in tr_l.segment_images.keys():
-            v_l = tr_l.segment_images[k]
-            v = tr.segment_images[k]
-            assert v_l.keys() == v.keys()
-            for fid in v_l.keys():
-                np.testing.assert_allclose(v_l[fid], v[fid])
-        for a in check_attrs:
-            assert getattr(tr_l, a) == getattr(tr, a)
-
-
-class TestBaseIntermolecularTracker(TestBaseTracker):
+class TestIntermolecularTracker:
     @pytest.fixture
     def loc_data(self):
         da1 = pd.DataFrame({"x": [0.0] * 15, "y": [0.0] * 15})
@@ -1284,7 +1302,3 @@ class TestBaseIntermolecularTracker(TestBaseTracker):
                  ("fret", "a_particle")], ignore_index=True
                 ).sort_index(axis=1),
             a_exp_s)
-
-    def test_interpolate_missing_all(self, loc_data):
-        # This method works for the base class and has not been reimplemented
-        pass
