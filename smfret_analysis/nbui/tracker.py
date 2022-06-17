@@ -32,7 +32,10 @@ class Locator(ipywidgets.VBox):
 
         self._opened = []
 
-        self._file_selector.observe(self._file_changed, "value")
+        # Also update when options are set
+        # These are mapping file id -> file name, thus changeing options will
+        # not necessarily change the value (file id)
+        self._file_selector.observe(self._file_changed, ["value", "options"])
         self._frame_selector.observe(self._frame_changed, "value")
         # Assuming that changing the algorithm changes the options, this will
         # suffice
