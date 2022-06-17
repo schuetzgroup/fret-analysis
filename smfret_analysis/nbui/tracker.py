@@ -17,7 +17,7 @@ from .. import base
 class Locator(ipywidgets.VBox):
     settings: Dict = traitlets.Dict()
 
-    def __init__(self, tracker: base.Tracker):
+    def __init__(self, tracker: base.BaseTracker):
         self._tracker = tracker
         self._locator = nbui.Locator()
         self._files = []
@@ -86,7 +86,7 @@ class Locator(ipywidgets.VBox):
 
 
 class RegistrationLocator(Locator):
-    def __init__(self, tracker: base.Tracker, channel: str):
+    def __init__(self, tracker: base.BaseTracker, channel: str):
         super().__init__(tracker)
         self._channel = channel
 
@@ -101,7 +101,7 @@ class RegistrationLocator(Locator):
 
 
 class FRETLocator(Locator):
-    def __init__(self, tracker: base.Tracker):
+    def __init__(self, tracker: base.BaseTracker):
         super().__init__(tracker)
 
         self._dataset_selector = ipywidgets.Dropdown(description="dataset")
@@ -148,15 +148,15 @@ class _ChannelSplitter(ipywidgets.VBox):
 
 
 class BaseTrackerNbUI:
-    """Jupyter Notebook/Lab UI for :py:class:`base.Tracker`
+    """Jupyter Notebook/Lab UI for :py:class:`base.BaseTracker`
 
     This provides the UI part. Create a class derived from
-    :py:class:`base.Tracker` and this for a UI to perform single-molecule FRET
-    tracking in Jupyter notebooks.
+    :py:class:`base.BaseTracker` and this for a UI to perform single-molecule
+    FRET tracking in Jupyter notebooks.
 
     Examples
     --------
-    >>> class Tracker(base.Tracker, BaseTrackerNbUI):
+    >>> class Tracker(BaseTrackerChildClass, BaseTrackerNbUI):
     ...     pass
     """
 
@@ -173,7 +173,7 @@ class BaseTrackerNbUI:
             # monitor changes via UI
             v.observe(lambda c, k=k: self._ui_loc_options_changed(k, c),
                       "settings")
-            # set base.Tracker.locate_options
+            # set base.BaseTracker.locate_options
             self._ui_loc_options_changed(k)
 
         # create UI elements for choosing emission channel ROIs
@@ -331,7 +331,7 @@ class BaseTrackerNbUI:
         label.value = "Finished interpolating."
 
 
-class Tracker(base.Tracker, BaseTrackerNbUI):
+class IntramolecularTracker(base.IntramolecularTracker, BaseTrackerNbUI):
     """Jupyter notebook UI for tracking intramolecular single-molecule FRET
 
     This allows for image registration, single molecule localization,
