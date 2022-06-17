@@ -292,7 +292,7 @@ class BaseTrackerNbUI:
         display(label)
 
         def update_label(file, n, num_files):
-            label.value = ("Locating molecules in {file} "
+            label.value = (f"Locating molecules in {file} "
                            f"({n + 1}/{num_files})…")
 
         self.locate_all(update_label)
