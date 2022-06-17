@@ -291,11 +291,11 @@ class TestBaseTracker:
         np.testing.assert_allclose(res["donor"]["donor", "mass"], dd_mass,
                                    atol=1.0)
         np.testing.assert_allclose(res["donor"]["acceptor", "mass"], da_mass,
-                                   atol=1.0)
+                                   atol=3.0)
         np.testing.assert_allclose(res["acceptor"]["donor", "mass"], ad_mass,
                                    atol=1.0)
         np.testing.assert_allclose(res["acceptor"]["acceptor", "mass"],
-                                   aa_mass, atol=1.0)
+                                   aa_mass, atol=2.0)
         np.testing.assert_allclose(res["donor"]["donor", "bg"], bg, atol=0.5)
         np.testing.assert_allclose(res["donor"]["acceptor", "bg"], bg,
                                    atol=0.5)
@@ -337,6 +337,16 @@ class TestBaseTracker:
             tr.rois = rois
             res = tr.locate_video(src, n_threads=2)
             self._check_locate_result(res, coords, 1300, 2000, 0, 1300, 200)
+
+        tr.brightness_options["smooth_sigma"] = 1.0
+
+        for src, rois in [("single.tif", {"donor": d_roi, "acceptor": a_roi}),
+                          (("split_don.tif", "split_acc.tif"),
+                           {"donor": None, "acceptor": None})]:
+            tr.rois = rois
+            res = tr.locate_video(src, n_threads=2)
+            # Values were found be a test run
+            self._check_locate_result(res, coords, 1292, 1986, 0, 1291, 200)
 
     def test_locate_all(self, tmp_path, channel_transform, coords):
         d_roi = roi.ROI((0, 0), size=(140, 150))
@@ -602,6 +612,20 @@ class TestBaseTracker:
         pd.testing.assert_frame_equal(res["donor"].sort_index(axis=1), d_exp)
         pd.testing.assert_frame_equal(res["acceptor"].sort_index(axis=1),
                                       a_exp)
+
+        tr.brightness_options["smooth_sigma"] = 0.3
+        res = copy.deepcopy(loc_data)
+        tr.interpolate_missing_video("da_ims.tif", res)
+        d_exp_s = d_exp.copy()
+        a_exp_s = a_exp.copy()
+        # Values determined by test run
+        d_exp_s.loc[1, ("acceptor", "signal")] = 2.9541415
+        d_exp_s.loc[1, ("donor", "signal")] = 1.969428
+        a_exp_s.loc[1, ("acceptor", "signal")] = 4.923569
+        a_exp_s.loc[1, ("donor", "signal")] = 3.9388553
+        pd.testing.assert_frame_equal(res["donor"].sort_index(axis=1), d_exp_s)
+        pd.testing.assert_frame_equal(res["acceptor"].sort_index(axis=1),
+                                      a_exp_s)
 
     def test_interpolate_missing_all(self, loc_data, tmp_path):
         tr = base.Tracker("da", tmp_path)
@@ -1237,6 +1261,29 @@ class TestBaseIntermolecularTracker(TestBaseTracker):
                  ("fret", "a_particle")], ignore_index=True
                 ).sort_index(axis=1),
             a_exp)
+
+        tr.brightness_options["smooth_sigma"] = 0.3
+        res = copy.deepcopy(loc_data)
+        tr.interpolate_missing_video("da_ims.tif", res)
+        d_exp_s = d_exp.copy()
+        a_exp_s = a_exp.copy()
+        # Values determined by test run
+        d_exp_s.loc[1, ("acceptor", "signal")] = 2.9541415
+        d_exp_s.loc[1, ("donor", "signal")] = 1.969428
+        a_exp_s.loc[0, ("acceptor", "signal")] = 6.8929968
+        a_exp_s.loc[0, ("donor", "signal")] = 5.908283
+        pd.testing.assert_frame_equal(
+            res["donor"].sort_values(
+                [("fret", "particle"), ("fret", "frame"),
+                 ("fret", "d_particle")], ignore_index=True
+                ).sort_index(axis=1),
+            d_exp_s)
+        pd.testing.assert_frame_equal(
+            res["acceptor"].sort_values(
+                [("fret", "particle"), ("fret", "frame"),
+                 ("fret", "a_particle")], ignore_index=True
+                ).sort_index(axis=1),
+            a_exp_s)
 
     def test_interpolate_missing_all(self, loc_data):
         # This method works for the base class and has not been reimplemented

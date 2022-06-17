@@ -13,6 +13,7 @@ import warnings
 
 import numpy as np
 import pandas as pd
+from scipy import ndimage
 from sdt import (brightness, flatfield as _flatfield, helper, io, loc,
                  multicolor, roi, spatial)
 import trackpy
@@ -89,6 +90,9 @@ class Tracker(traitlets.HasTraits):
     brightness_options: Dict[str, Any] = traitlets.Dict()
     """Options for fluorescence brightness measurement. See
     :py:func:`brightness.from_raw_image` for details.
+
+    Additionally, ``smooth_sigma`` may be specified to apply a Gaussian filter
+    with given sigma for noise reduction.
     """
     neighbor_distance: float = traitlets.Float(default_value=None,
                                                allow_none=True)
@@ -318,6 +322,28 @@ class Tracker(traitlets.HasTraits):
             return 2 * self.brightness_options["radius"] + 1
         return self.neighbor_distance
 
+    def _get_brightness_options_filter(self) -> Tuple[Dict, Callable]:
+        """Get options for `brightness.from_raw_image` and filter function
+
+        Returns
+        -------
+        Dict of options to be passed to
+        :py:func:`sdt.brightness.from_raw_image` as well as a function that
+        applies a Gaussian blur if `smooth_sigma` is in
+        :py:attr:`brightness_options` or does nothing if not.
+        """
+        opts = self.brightness_options.copy()
+        sig = opts.pop("smooth_sigma", 0)
+        if sig > 0:
+            @helper.pipeline
+            def flt(x):
+                return ndimage.gaussian_filter(
+                    np.asanyarray(x, dtype=float), sig)
+        else:
+            def flt(x):
+                return x
+        return opts, flt
+
     def locate_frame(self, donor_frame: np.ndarray, acceptor_frame: np.ndarray,
                      exc_type: str) -> pd.DataFrame:
         """Locate single molecules in a single frame
@@ -364,11 +390,10 @@ class Tracker(traitlets.HasTraits):
 
         a_loc = loc_func(loc_frame, **opts["options"])
         a_loc["frame"] = 0  # needed for `brightness.from_raw_image`
-        brightness.from_raw_image(a_loc, [acceptor_frame],
-                                  **self.brightness_options)
+        b_opts, b_filt = self._get_brightness_options_filter()
+        brightness.from_raw_image(a_loc, [b_filt(acceptor_frame)], **b_opts)
         d_loc = self.registrator(a_loc, channel=2)
-        brightness.from_raw_image(d_loc, [donor_frame],
-                                  **self.brightness_options)
+        brightness.from_raw_image(d_loc, [b_filt(donor_frame)], **b_opts)
         res = pd.concat({"donor": d_loc.drop(columns="frame"),
                          "acceptor": a_loc.drop(columns="frame")},
                         axis=1)
@@ -562,10 +587,10 @@ class Tracker(traitlets.HasTraits):
         opened = []
         try:
             im_seq, opened = self._open_image_sequence(source)
-            brightness.from_raw_image(d_loc, im_seq["donor"],
-                                      **self.brightness_options)
-            brightness.from_raw_image(a_loc, im_seq["acceptor"],
-                                      **self.brightness_options)
+            b_opts, b_filt = self._get_brightness_options_filter()
+            brightness.from_raw_image(d_loc, b_filt(im_seq["donor"]), **b_opts)
+            brightness.from_raw_image(a_loc, b_filt(im_seq["acceptor"]),
+                                      **b_opts)
         finally:
             for o in opened:
                 o.close()
@@ -909,10 +934,11 @@ class IntermolecularTracker(Tracker):
             opened = []
             try:
                 im_seq, opened = self._open_image_sequence(source)
-                brightness.from_raw_image(d_loc, im_seq["donor"],
-                                          **self.brightness_options)
-                brightness.from_raw_image(a_loc, im_seq["acceptor"],
-                                          **self.brightness_options)
+                b_opts, b_filt = self._get_brightness_options_filter()
+                brightness.from_raw_image(d_loc, b_filt(im_seq["donor"]),
+                                          **b_opts)
+                brightness.from_raw_image(a_loc, b_filt(im_seq["acceptor"]),
+                                          **b_opts)
             finally:
                 for o in opened:
                     o.close()
