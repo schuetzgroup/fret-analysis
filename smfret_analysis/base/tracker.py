@@ -380,7 +380,6 @@ class Tracker(traitlets.HasTraits):
         respectively. ``("fret", "has_neighbor")`` column specifies whether
         a molecule has a near neighbor.
         """
-        # TODO: Apply image filter for brightness measurement
         if exc_type == "donor":
             loc_frame = self.donor_sum(donor_frame, acceptor_frame)
         else:
