@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import scipy.stats
-from sdt import changepoint, fret, nbui
+from sdt import changepoint, nbui
 
 from .. import base
 
@@ -129,6 +129,90 @@ class BaseAnalyzerNbUI:
 
         return ipywidgets.HBox([d_sel, f_sel])
 
+    def find_subpopulations(self) -> ipywidgets.Widget:
+        """Interactively select component for calculation of excitation eff.
+
+        The excitation efficiency factor is computer from data with known 1:1
+        stoichiomtry. This displays datasets and allows for fitting Gaussian
+        mixture models to select the right component in an E–S plot. Parameters
+        can be passed to :py:meth:`calc_excitation_eff`.
+
+        Returns
+        -------
+        UI element
+
+        See also
+        --------
+        calc_excitation_eff
+        """
+        if self._population_fig is None:
+            self._population_fig = plt.subplots()[0]
+
+        self._population_fig.axes[0].cla()
+        state = {"artists": []}
+
+        n_comp_sel = ipywidgets.IntText(description="components", value=1)
+
+        def update(change=None):
+            d = pd.concat([self._apply_filters(v["donor"])
+                           for v in self.sm_data[state["id"][0]].values()],
+                          ignore_index=True)
+            # _excitation_eff_filter is defined in base.BaseAnalyzer child
+            # class to select data suitable for excitation efficiency
+            # calculation
+            d = d[self._excitation_eff_filter(d) &
+                  np.isfinite(d["fret", "eff_app"]) &
+                  np.isfinite(d["fret", "stoi_app"])].copy()
+            labels = base.gaussian_mixture_split(d, n_comp_sel.value)[0]
+
+            ax = self._population_fig.axes[0]
+
+            for ar in state["artists"]:
+                ar.remove()
+            state["artists"] = []
+
+            for lab in range(n_comp_sel.value):
+                dl = d[labels == lab]
+                sel = (np.isfinite(dl["fret", "eff_app"]) &
+                       np.isfinite(dl["fret", "stoi_app"]))
+                ar = ax.scatter(dl.loc[sel, ("fret", "eff_app")],
+                                dl.loc[sel, ("fret", "stoi_app")],
+                                marker=".", label=str(lab), alpha=0.6,
+                                color=f"C{lab%10}")
+                state["artists"].append(ar)
+            ax.legend(loc=0, title="index")
+            ax.set_xlabel("apparent eff.")
+            ax.set_ylabel("apparent stoi.")
+            self._population_fig.canvas.draw()
+
+        d_sel = self._make_dataset_selector(state, update,
+                                            show_file_selector=False)
+        n_comp_sel.observe(update, "value")
+
+        return ipywidgets.VBox([d_sel, n_comp_sel,
+                                self._population_fig.canvas])
+
+    def find_segmentation_options(self) -> nbui.Thresholder:
+        """UI for finding parameters for segmenting images
+
+        Parameters can be passed to :py:meth:`apply_segmentation`.
+
+        Returns
+        -------
+        Widget instance.
+        """
+        if self._thresholder is None:
+            self._thresholder = nbui.Thresholder()
+
+        self._thresholder.image_selector.images = {
+            self.sources[did][fid]: v[0]
+            for did, dset in self.segment_images.items()
+            for fid, v in dset.items()}
+
+        return self._thresholder
+
+
+class IntramolecularAnalyzer(base.IntramolecularAnalyzer, BaseAnalyzerNbUI):
     def find_changepoint_options(self) -> ipywidgets.Widget:
         """Find options for :py:meth:`segment_mass`
 
@@ -198,82 +282,7 @@ class BaseAnalyzerNbUI:
         return ipywidgets.VBox([d_sel, p_sel, pen_d_sel, pen_a_sel,
                                 self._segment_fig.canvas, p_label])
 
-    def find_subpopulations(self) -> ipywidgets.Widget:
-        """Interactively select component for calculation of excitation eff.
 
-        The excitation efficiency factor is computer from data with known 1:1
-        stoichiomtry. This displays datasets and allows for fitting Gaussian
-        mixture models to select the right component in an E–S plot. Parameters
-        can be passed to :py:meth:`calc_excitation_eff`.
-
-        Returns
-        -------
-        UI element
-
-        See also
-        --------
-        calc_excitation_eff
-        """
-        if self._population_fig is None:
-            self._population_fig = plt.subplots()[0]
-
-        state = {}
-
-        n_comp_sel = ipywidgets.IntText(description="components", value=1)
-
-        def update(change=None):
-            d = pd.concat([self._apply_filters(v["donor"])
-                           for v in self.sm_data[state["id"][0]].values()],
-                          ignore_index=True)
-            d = d[(d["fret", "a_seg"] == 0) &
-                  (d["fret", "d_seg"] == 0) &
-                  np.isfinite(d["fret", "eff_app"]) &
-                  np.isfinite(d["fret", "stoi_app"])].copy()
-            labels = fret.gaussian_mixture_split(d, n_comp_sel.value)[0]
-
-            ax = self._population_fig.axes[0]
-            ax.cla()
-            for lab in range(n_comp_sel.value):
-                dl = d[labels == lab]
-                sel = (np.isfinite(dl["fret", "eff_app"]) &
-                       np.isfinite(dl["fret", "stoi_app"]))
-                ax.scatter(dl.loc[sel, ("fret", "eff_app")],
-                           dl.loc[sel, ("fret", "stoi_app")],
-                           marker=".", label=str(lab), alpha=0.6)
-            ax.legend(loc=0, title="index")
-            ax.set_xlabel("apparent eff.")
-            ax.set_ylabel("apparent stoi.")
-            self._population_fig.canvas.draw()
-
-        d_sel = self._make_dataset_selector(state, update,
-                                            show_file_selector=False)
-        n_comp_sel.observe(update, "value")
-
-        return ipywidgets.VBox([d_sel, n_comp_sel,
-                                self._population_fig.canvas])
-
-    def find_segmentation_options(self) -> nbui.Thresholder:
-        """UI for finding parameters for segmenting images
-
-        Parameters can be passed to :py:meth:`apply_segmentation`.
-
-        Returns
-        -------
-            Widget instance.
-        """
-        if self._thresholder is None:
-            self._thresholder = nbui.Thresholder()
-
-        self._thresholder.image_selector.images = {
-            self.sources[did][fid]: v[0]
-            for did, dset in self.segment_images.items()
-            for fid, v in dset.items()}
-
-        return self._thresholder
-
-
-class Analyzer(base.Analyzer, BaseAnalyzerNbUI):
-    pass
 
 
 class DensityPlots(ipywidgets.Box):
@@ -283,7 +292,7 @@ class DensityPlots(ipywidgets.Box):
     the progress
     """
 
-    def __init__(self, analyzer: Analyzer, datasets: Sequence[str],
+    def __init__(self, analyzer: base.BaseAnalyzer, datasets: Sequence[str],
                  columns: Sequence[Sequence[str]] = [("fret", "eff_app"),
                                                      ("fret", "stoi_app")],
                  bounds: Sequence[Sequence[float]] = [(-0.5, 1.5),

@@ -5,17 +5,18 @@
 """Module containing base class for analyzing and filtering smFRET data"""
 from collections import defaultdict
 import contextlib
+import functools
 import itertools
 import numbers
-from typing import (Any, Callable, Dict, Iterable, Literal, Mapping, Optional,
+from typing import (Callable, Dict, Iterable, Literal, Mapping, Optional,
                     Sequence, Tuple, Union)
 
 import numpy as np
 import pandas as pd
 from scipy.interpolate import interp1d
-from sdt import changepoint, flatfield, helper, image, multicolor, roi
+from sdt import flatfield, helper, image, multicolor, roi
 
-from . import tracker
+from . import tracker_base
 from ..data_store import DataStore
 
 
@@ -62,25 +63,7 @@ def gaussian_mixture_split(data: pd.DataFrame, n_components: int,
     return labels, gmm.means_[mean_sort_idx]
 
 
-class Analyzer:
-    """Class for analyzing and filtering of smFRET data
-
-    This provides various analysis and filtering methods which act on the
-    :py:attr:`tracks` attribute.
-
-    Correction of FRET efficiencies and stoichiometries for donor leakage and
-    direct acceptor excitation is implemented according to [Hell2018]_,
-    while different detection efficiencies for the different
-    fluorophores are accounted for as described in [MacC2010]_ as well
-    the different excitation efficiencies according to [Lee2005]_.
-    """
-
-    bleach_threshold: Mapping[Literal["donor", "acceptor"], float
-                              ] = {"donor": 500, "acceptor": 500}
-    """Intensity (mass) thresholds upon donor and acceptor excitation,
-    respecitively, below which a signal is considered bleached. Used for
-    bleaching step analysis.
-    """
+class BaseAnalyzer:
     sm_data: Dict[str, Dict[Literal["donor", "acceptor"], pd.DataFrame]]
     """smFRET tracking data, mapping dataset -> excitation channel -> data"""
     special_sm_data: Dict[str, Dict[Literal["donor", "acceptor"],
@@ -90,10 +73,6 @@ class Analyzer:
     """
     flatfield: Dict[Literal["donor", "acceptor"], flatfield.Corrector]
     """channel name -> flatfield correction class instance"""
-    cp_detector: Any
-    """Changepoint detector class instance used to perform bleching step
-    detection.
-    """
     leakage: float = 0.0
     r"""Correction factor for donor leakage into the acceptor channel;
     :math:`\alpha` in [Hell2018]_
@@ -104,7 +83,7 @@ class Analyzer:
     """
     detection_eff: float = 1.0
     r"""Correction factor(s) for the detection efficiency difference
-    beteen donor and acceptor fluorophore; :math:`\gamma` in [Hell2018].
+    beteen donor and acceptor fluorophore; :math:`\gamma` in [Hell2018]_.
 
     Can be a scalar for global correction or a :py:class:`pandas.Series`
     for individual correction. In the latter case, the index is the
@@ -112,27 +91,16 @@ class Analyzer:
     """
     excitation_eff: float = 1.0
     r"""Correction factor(s) for the excitation efficiency difference
-    beteen donor and acceptor fluorophore; :math:`\beta` in [Hell2018].
+    beteen donor and acceptor fluorophore; :math:`\beta` in [Hell2018]_.
     """
     frame_selector: Optional[multicolor.FrameSelector] = None
     """Select frames of different excitation types"""
 
-    def __init__(self, cp_detector: Optional[Any] = None):
-        """Parameters
-        ----------
-        cp_detector
-            Changepoint detetctor. If `None`, create a
-            :py:class:`changepoint.Pelt` instance with ``model="l2"``,
-            ``min_size=1``, and ``jump=1``.
-        """
+    def __init__(self):
         super().__init__()
 
         self.sm_data = {}
         self.special_sm_data = {}
-
-        if cp_detector is None:
-            cp_detector = changepoint.Pelt("l2", min_size=1, jump=1)
-        self.cp_detector = cp_detector
 
         self._reason_counter = defaultdict(lambda: 0)
 
@@ -223,52 +191,62 @@ class Analyzer:
                 for sub in d.values():
                     self._reset_filters_single(sub, keep)
 
+    _app_vals_columns = []
+    """DataFrame columns which identify particles upon donor excitation for
+    calculation of apparent FRET values (see
+    :py:meth:`_calc_apparent_values_single`)..
+    """
+
     @classmethod
     def _calc_apparent_values_single(
             cls, tracks: Mapping[Literal["donor", "acceptor"], pd.DataFrame],
             a_mass_interp: str, skip_neighbors: bool):
-
         d_tracks = tracks["donor"]
         a_tracks = tracks["acceptor"]
 
-        # calculate total mass upon acceptor excitation, interpolate to
-        # donor excitation frames
         a_mask = cls._apply_filters(a_tracks, type="mask",
                                     skip_neighbors=skip_neighbors)
-        a_filtered = a_tracks[a_mask].sort_values([("fret", "particle"),
-                                                   ("fret", "frame")])
 
-        a_split = dict(helper.split_dataframe(
-                a_filtered, ("fret", "particle"),
+        a_mass = []
+        for col in cls._app_vals_columns:
+            # Go through each column and calculate intensity upon acceptor
+            # excitation if the column entry is >= 0
+            a_filtered = a_tracks[a_mask & (a_tracks[col] >= 0)]
+            a_filtered = a_filtered.sort_values([col, ("fret", "frame")])
+
+            a_split = dict(helper.split_dataframe(
+                a_filtered, col,
                 [("acceptor", "mass"), ("fret", "frame")],
                 type="array_list", sort=False))
 
-        a_mass = []
-        for p, (idx, d_frames) in helper.split_dataframe(
-                d_tracks.sort_values([("fret", "particle"),
-                                      ("fret", "frame")]),
-                ("fret", "particle"), [("fret", "frame")],
-                type="array_list", keep_index=True, sort=False):
-            a_direct, a_frames = a_split.get(p, ([], []))
-            if len(a_direct) == 0:
-                # No direct acceptor excitation, cannot do anything
-                a_mass.append(pd.Series(np.NaN, index=idx))
-                continue
-            elif len(a_direct) == 1:
-                # Only one direct acceptor excitation; use this value
-                # for all data points of this particle
-                a_mass.append(pd.Series(a_direct[0], index=idx))
-                continue
-            else:
-                # Enough direct acceptor excitations for interpolation
-                a_mass_func = interp1d(
-                    a_frames, a_direct, a_mass_interp, copy=False,
-                    fill_value=(a_direct[0], a_direct[-1]),
-                    assume_sorted=True, bounds_error=False)
-                # Calculate (interpolated) mass upon direct acceptor
-                # excitation
-                a_mass.append(pd.Series(a_mass_func(d_frames), index=idx))
-        a_mass = pd.concat(a_mass)
+            a_m = []
+            for p, (idx, d_frames) in helper.split_dataframe(
+                    d_tracks.sort_values([col, ("fret", "frame")]),
+                    col, [("fret", "frame")], type="array_list",
+                    keep_index=True, sort=False):
+                a_direct, a_frames = a_split.get(p, ([], []))
+                if len(a_direct) == 0:
+                    # No direct acceptor excitation, cannot do anything
+                    a_m.append(pd.Series(np.NaN, index=idx))
+                    continue
+                elif len(a_direct) == 1:
+                    # Only one direct acceptor excitation; use this value
+                    # for all data points of this particle
+                    a_m.append(pd.Series(a_direct[0], index=idx))
+                    continue
+                else:
+                    # Enough direct acceptor excitations for interpolation
+                    a_m_func = interp1d(
+                        a_frames, a_direct, a_mass_interp, copy=False,
+                        fill_value=(a_direct[0], a_direct[-1]),
+                        assume_sorted=True, bounds_error=False)
+                    # Calculate (interpolated) mass upon direct acceptor
+                    # excitation
+                    a_m.append(pd.Series(a_m_func(d_frames), index=idx))
+            a_mass.append(pd.concat(a_m))
+        # Combine intensites. If an index has multiple values, choose the
+        # first.
+        a_mass = functools.reduce(pd.Series.combine_first, a_mass)
 
         # Total mass upon donor excitation
         d_mass = d_tracks["donor", "mass"] + d_tracks["acceptor", "mass"]
@@ -342,156 +320,8 @@ class Analyzer:
                                     self.special_sm_data.values()):
             # iterate files
             for d in dset.values():
-                self._calc_apparent_values_single(d, a_mass_interp,
-                                                  skip_neighbors)
-
-    def _mass_changepoints_single(self, tracks: pd.DataFrame, channel: str,
-                                  stat_funcs: Iterable[Callable],
-                                  stat_names: Iterable[str],
-                                  stat_margin: int,
-                                  **kwargs):
-        e_type = channel[0]
-        mass_col = f"{e_type}_mass"
-        seg_col = f"{e_type}_seg"
-
-        trc = tracks[[("fret", "particle"), ("fret", "frame"),
-                      ("fret", mass_col)]]
-        trc = trc.sort_values([("fret", "particle"), ("fret", "frame")])
-        trc["mask"] = self._apply_filters(tracks, type="mask")
-
-        trc_split = helper.split_dataframe(
-            trc, ("fret", "particle"), [("fret", mass_col), ("mask",)],
-            type="array_list", sort=False, keep_index=True)
-
-        def cp_func(data):
-            return self.cp_detector.find_changepoints(data, **kwargs)
-
-        segments = []
-        stat_results = defaultdict(list)
-        for p, trc_p in trc_split:
-            seg_p, stat_p = changepoint.segment_stats(
-                trc_p[1], cp_func, stat_funcs, mask=trc_p[2],
-                stat_margin=stat_margin, return_len="data")
-            segments.append(pd.Series(seg_p, index=trc_p[0]))
-            for name, st in zip(stat_names, stat_p.T):
-                stat_results[f"{seg_col}_{name}"].append(
-                    pd.Series(st, index=trc_p[0]))
-
-        tracks["fret", seg_col] = pd.concat(segments)
-        for col, st in stat_results.items():
-            tracks["fret", col] = pd.concat(st)
-
-    def mass_changepoints(self, channel: Literal["donor", "acceptor"],
-                          stats: Union[Callable, str,
-                                       Iterable[Union[Callable, str]]
-                                       ] = "median",
-                          stat_margin: int = 1,
-                          **kwargs):
-        """Segment tracks by changepoint detection in brightness time trace
-
-        Changepoint detection is run on the donor or acceptor brightness
-        (``mass``) time trace, depending on the `channels` argument.
-        This appends py:attr:`tracks` with a ``("fret", "d_seg")`` or
-        `("fret", "a_seg")`` column for donor or acceptor, resp. For
-        each localization, this holds the number of the segment it belongs to.
-        Furthermore, statistics (such as median brightness) can/should be
-        calculated, which can later be used to analyze stepwise bleaching
-        (see :py:meth:`bleach_step`).
-
-        **:py:attr:`tracks` will be sorted according to
-        ``("fret", "particle")`` and ``("donor", self.columns["time"])`` in the
-        process.**
-
-        Parameters
-        ----------
-        channel
-            In which channel (``"donor"`` or ``"acceptor"``) to perform
-            changepoint detection.
-        stats
-            Statistics to calculate for each track segment. For each entry
-            ``s``, a column named ``"{channel}_seg_{s}"`` is appendend, where
-            ``channel`` is ``d`` for donor and ``a`` for acceptor.
-            ``s`` can be the name of a numpy function or a callable returning
-            a statistic, such as :py:func:`numpy.mean`.
-        stat_margin
-            Number of data points around a changepoint to exclude from
-            statistics calculation. This can prevent bias in the statistics due
-            to recording a bleaching event in progress.
-        **kwargs
-            Keyword arguments to pass to :py:attr:`cp_detector`
-            `find_changepoints()` method.
-
-        Examples
-        --------
-        Pass ``penalty=1e6`` to the changepoint detector's
-        ``find_changepoints`` method, perform detection both channels:
-
-        >>> ana.mass_changepoints("donor", penalty=1e6)
-        >>> ana.mass_changepoints("acceptor", penalty=1e6)
-        """
-        if isinstance(stats, str) or callable(stats):
-            stats = [stats]
-        stat_funcs = []
-        stat_names = []
-        for st in stats:
-            if isinstance(st, str):
-                stat_names.append(st)
-                stat_funcs.append(getattr(np, st))
-            elif callable(st):
-                stat_names.append(st.__name__)
-                stat_funcs.append(st)
-            else:
-                stat_names.append(st[0])
-                stat_funcs.append(st[1])
-
-        # iterate datasets
-        for dset in itertools.chain(self.sm_data.values(),
-                                    self.special_sm_data.values()):
-            # iterate files
-            for d in dset.values():
-                self._mass_changepoints_single(d["donor"], channel, stat_funcs,
-                                               stat_names, stat_margin,
-                                               **kwargs)
-
-    def _bleaches(self, steps: Sequence[float],
-                  channel: Literal["donor", "acceptor"]) -> bool:
-        """Returns whether there is single-step bleaching
-
-        Parameters
-        ----------
-        steps
-            Intensity values (e.g., mean intensity) for each step
-        channel
-            0 for donor, 1 for acceptor. Used to get bleaching thershold from
-            :py:attr:`bleach_thresh`.
-
-        Returns
-        -------
-        `True` if track exhibits single-step bleaching, `False` otherwise.
-        """
-        return (len(steps) > 1 and
-                all(s < self.bleach_threshold[channel] for s in steps[1:]))
-
-    def _bleaches_partially(self, steps: Sequence[float],
-                            channel: Literal["donor", "acceptor"]) -> bool:
-        """Returns whether there is partial bleaching
-
-        Parameters
-        ----------
-        steps
-            Intensity values (e.g., mean intensity) for each step
-        channel
-            0 for donor, 1 for acceptor. Used to get bleaching thershold from
-            :py:attr:`bleach_thresh`.
-
-        Returns
-        -------
-        `True` if there is a bleaching step that does not go below threshold,
-        `False` if there is no bleaching step or bleaching goes below
-        threshold in a single step.
-        """
-        return (len(steps) > 1 and
-                any(s > self.bleach_threshold[channel] for s in steps[1:]))
+                self._calc_apparent_values_single(
+                    d, a_mass_interp, skip_neighbors)
 
     def _increment_reason_counter(self, reason: str) -> int:
         self._reason_counter[reason] += 1
@@ -531,126 +361,6 @@ class Analyzer:
             tracks.loc[old_good & (flt > 0), ("filter", reason)] = cnt
             tracks.loc[old_good & (flt == 0), ("filter", reason)] = 0
 
-    def _bleach_step_single(
-            self, tracks: Mapping[Literal["donor", "acceptor"], pd.DataFrame],
-            condition: Literal["donor", "acceptor", "donor or acceptor",
-                               "no partial"],
-            stat: str, reason: str, reason_cnt: int):
-        trc = tracks["donor"].sort_values([("fret", "particle"),
-                                           ("fret", "frame")])
-
-        trc_split = helper.split_dataframe(
-            trc, ("fret", "particle"),
-            [("fret", "d_seg"), ("fret", f"d_seg_{stat}"),
-             ("fret", "a_seg"), ("fret", f"a_seg_{stat}")],
-            type="array_list", sort=False)
-
-        good_p = []
-        for p, trc_p in trc_split:
-            is_good = True
-            if -1 in trc_p[0] or -1 in trc_p[2]:
-                # -1 as segment number means that changepoint detection failed
-                continue
-
-            # Get change changepoints upon acceptor exc from segments
-            cps_a = np.nonzero(np.diff(trc_p[2]))[0] + 1
-            split_a = np.array_split(trc_p[3], cps_a)
-            stat_a = [s[0] for s in split_a]
-
-            # Get change changepoints upon donor exc from segments
-            cps_d = np.nonzero(np.diff(trc_p[0]))[0] + 1
-            split_d = np.array_split(trc_p[1], cps_d)
-            stat_d = [s[0] for s in split_d]
-
-            if condition == "donor":
-                is_good = (self._bleaches(stat_d, "donor") and not
-                           self._bleaches_partially(stat_a, "acceptor"))
-            elif condition == "acceptor":
-                is_good = (self._bleaches(stat_a, "acceptor") and not
-                           self._bleaches_partially(stat_d, "donor"))
-            elif condition in ("donor or acceptor", "acceptor or donor"):
-                is_good = ((self._bleaches(stat_d, "donor") and not
-                            self._bleaches_partially(stat_a, "acceptor")) or
-                           (self._bleaches(stat_a, "acceptor") and not
-                            self._bleaches_partially(stat_d, "donor")))
-            elif condition == "no partial":
-                is_good = not (self._bleaches_partially(stat_d, "donor") or
-                               self._bleaches_partially(stat_a, "acceptor"))
-            else:
-                raise ValueError(f"unknown strategy: {condition}")
-
-            if is_good:
-                good_p.append(p)
-
-        filtered_d = tracks["donor"]["fret", "particle"].isin(good_p)
-        self._update_filter(tracks["donor"],
-                            np.asarray(~filtered_d, dtype=np.intp),
-                            reason, reason_cnt)
-        filtered_a = tracks["acceptor"]["fret", "particle"].isin(good_p)
-        self._update_filter(tracks["acceptor"],
-                            np.asarray(~filtered_a, dtype=np.intp),
-                            reason, reason_cnt)
-
-    def bleach_step(self, condition: str = "donor or acceptor",
-                    stat: str = "median", reason: str = "bleach_step"):
-        """Find tracks with acceptable fluorophore bleaching behavior
-
-        What "acceptable" means is specified by the `condition` parameter.
-
-        ``("fret", "d_seg")``, ``("fret", f"d_seg_{stat}")``, ``("fret",
-        "a_seg")``, and ``("fret", f"a_seg_{stat}")`` (where ``{stat}`` is
-        replaced by the value of the `stat` parameter) columns need to be
-        present in :py:attr:`tracks` for this to work, which can be achieved by
-        performing changepoint in both channels using :py:meth:`segment_mass`.
-
-        The donor considered bleached if its ``("fret", f"d_seg_{stat}")``
-        is below :py:attr:`bleach_threshold` ``["donor"]``. The acceptor
-        considered bleached if its ``("fret", f"a_seg_{stat}")`` is below
-        :py:attr:`bleach_threshold` ``["acceptor"]``
-
-        Parameters
-        ----------
-        condition
-            If ``"donor"``, accept only tracks where the donor bleaches in a
-            single step and the acceptor shows either no bleach step or
-            completely bleaches in a single step.
-            Likewise, ``"acceptor"`` will accept only tracks where the acceptor
-            bleaches fully in one step and the donor shows no partial
-            bleaching.
-            ``donor or acceptor`` requires that one channel bleaches in a
-            single step while the other either also bleaches in one step or not
-            at all (no partial bleaching).
-            If ``"no partial"``, there may be no partial bleaching, but
-            bleaching is not required.
-        stat
-            Statistic to use to determine bleaching steps. Has to be one that
-            was passed to via ``stats`` parameter to
-            :py:meth:`mass_changepoints`.
-        reason
-            Filtering reason / column name to use.
-
-        Examples
-        --------
-        Consider acceptors with a brightness ``("fret", "a_mass")`` of less
-        than 500 counts and donors with a brightness ``("fret", "d_mass")`` of
-        less than 800 counts bleached. Remove all tracks that don't show
-        acceptable bleaching behavior.
-
-        >>> ana.bleach_threshold = {"donor": 800, "acceptor": 500}
-        >>> ana.bleach_step("donor or acceptor")
-        """
-        reason_cnt = self._increment_reason_counter(reason)
-
-        # iterate datasets
-        # TODO: This makes no sense e.g. for donor-only and acceptor-only
-        # datasets
-        for dset in itertools.chain(self.sm_data.values(),
-                                    self.special_sm_data.values()):
-            # iterate files
-            for d in dset.values():
-                self._bleach_step_single(d, condition, stat, reason,
-                                         reason_cnt)
-
     @staticmethod
     def _eval(data: pd.DataFrame, expr: str, mi_sep: str = "_"):
         """Call ``eval(expr)`` for `data`
@@ -671,8 +381,7 @@ class Analyzer:
 
         Returns
         -------
-        pandas.Series, dtype(bool)
-            Boolean Series indicating whether an entry fulfills `expr` or not.
+        Boolean Series indicating whether an entry fulfills `expr` or not.
 
         Examples
         --------
@@ -739,95 +448,6 @@ class Analyzer:
                     filtered = self._eval(sub, expr, mi_sep)
                     filtered = np.asarray(~filtered, dtype=np.intp)
                     self._update_filter(sub, filtered, reason, reason_cnt)
-
-    def _query_particles_single(
-            self, tracks: Mapping[Literal["donor", "acceptor"], pd.DataFrame],
-            expr: str, min_abs: int, min_rel: float, mi_sep: str,
-            reason: str, reason_cnt: int):
-        pre_filtered = self._apply_filters(tracks["donor"])
-        e = self._eval(pre_filtered, expr, mi_sep).to_numpy()
-        all_p = pre_filtered["fret", "particle"].to_numpy()
-        p, c = np.unique(all_p[e], return_counts=True)
-        p_sel = np.ones(len(p), dtype=bool)
-
-        if min_abs is not None:
-            if min_abs <= 0:
-                p2 = pre_filtered.loc[pre_filtered["fret", "particle"].isin(p),
-                                      ("fret", "particle")].to_numpy()
-                min_abs = np.unique(p2, return_counts=True)[1] + min_abs
-            p_sel &= c >= min_abs
-        if min_rel:
-            p2 = pre_filtered.loc[pre_filtered["fret", "particle"].isin(p),
-                                  ("fret", "particle")].to_numpy()
-            c2 = np.unique(p2, return_counts=True)[1]
-            p_sel &= (c / c2 >= min_rel)
-
-        good_p = p[p_sel]
-        bad_p = np.setdiff1d(all_p, good_p)
-
-        for sub in tracks.values():
-            good = sub["fret", "particle"].isin(good_p).to_numpy()
-            bad = sub["fret", "particle"].isin(bad_p).to_numpy()
-            flt = np.full(len(sub), -1, dtype=np.intp)
-            flt[good] = 0
-            flt[bad] = 1
-            self._update_filter(sub, flt, reason, reason_cnt)
-
-    def query_particles(self, expr: str, min_abs: int = 1,
-                        min_rel: float = 0.0, mi_sep: str = "_",
-                        reason: str = "query_p"):
-        """Remove particles that don't fulfill `expr` enough times
-
-        Any particle that does not fulfill `expr` at least `min_abs` times AND
-        during at least a fraction of `min_rel` of its length is removed from
-        :py:attr:`tracks`.
-
-        The column MultiIndex is flattened for this purpose.
-
-        Parameters
-        ----------
-        expr
-            Filter expression. See :py:meth:`pandas.DataFrame.eval` for
-            details.
-        min_abs
-            Minimum number of times a particle has to fulfill `expr`. If
-            negative, this means "all but ``abs(min_abs)``". If 0, it has
-            to be fulfilled in all frames.
-        min_rel
-            Minimum fraction of data points that have to fulfill `expr` for a
-            particle not to be removed.
-        mi_sep
-            Use this to separate levels when flattening the column
-            MultiIndex. Defaults to "_".
-        reason
-            Filtering reason / column name to use.
-
-        Examples
-        --------
-        Remove any particles where not ("fret", "a_mass") > 500 at least twice
-        from :py:attr:`tracks`.
-
-        >>> filt.query_particles("fret_a_mass > 500", 2)
-
-        Remove any particles where ("fret", "a_mass") <= 500 in more than one
-        frame:
-
-        >>> filt.query_particles("fret_a_mass > 500", -1)
-
-        Remove any particle where not ("fret", "a_mass") > 500 for at least
-        75 % of the particle's data points, with a minimum of two data points:
-
-        >>> filt.query_particles("fret_a_mass > 500", 2, min_rel=0.75)
-        """
-        reason_cnt = self._increment_reason_counter(reason)
-
-        # iterate datasets
-        for dset in itertools.chain(self.sm_data.values(),
-                                    self.special_sm_data.values()):
-            # iterate files
-            for d in dset.values():
-                self._query_particles_single(d, expr, min_abs, min_rel, mi_sep,
-                                             reason, reason_cnt)
 
     def _image_mask_single(self, tracks: Mapping[Literal["donor", "acceptor"],
                                                  pd.DataFrame],
@@ -1003,28 +623,21 @@ class Analyzer:
         m_eff = np.nanmean(np.concatenate(eff))
         self.leakage = m_eff / (1 - m_eff)
 
-    def calc_leakage_from_bleached(
-            self, datasets: Union[str, Sequence[str], None] = None,
-            stat: str = "median", print_summary: bool = True):
-        """Calculate leakage correction factor from bleached acceptor traces
-
-        This takes those parts of traces where the acceptor is bleached, but
-        the donor isn't.
+    def _calc_leakage_from_data(
+            self, datasets: Union[str, Sequence[str], None],
+            selector: Callable[[pd.DataFrame], pd.Series],
+            print_summary: bool):
+        """Helper function for leakage calculation from SM data
 
         Parameters
         ----------
         datasets
             dataset(s) to use. If `None`, use all.
-        stat
-            Statistic to use to determine bleaching steps. Has to be one that
-            was passed to via ``stats`` parameter to
-            :py:meth:`mass_changepoints`.
+        selector
+            Takes a DataFrame as an argument and returns a boolean Series
+            indicating which rows to use for calculation
         print_summary
             Print number of datapoints and result.
-
-        See also
-        --------
-        calc_leakage
         """
         if isinstance(datasets, str):
             datasets = (datasets,)
@@ -1037,16 +650,11 @@ class Analyzer:
         for dset in datasets:
             for d in dset.values():
                 trc = d["donor"]
-                # search for donor excitation frames where acceptor is bleached
-                # but donor isn't
                 # TODO: Respect filters?
-                sel = ((trc["fret", "has_neighbor"] == 0) &
-                       (trc["fret", "a_seg"] >= 1) &
-                       (trc["fret", f"a_seg_{stat}"] <
-                        self.bleach_threshold["acceptor"]) &
-                       (trc["fret", "d_seg"] == 0))
-                effs.append(trc.loc[sel, ("fret", "eff_app")].to_numpy())
+                effs.append(trc.loc[selector(trc),
+                                    ("fret", "eff_app")].to_numpy())
         effs = np.concatenate(effs)
+        effs = effs[np.isfinite(effs)]
         m_eff = np.mean(effs)
         self.leakage = m_eff / (1 - m_eff)
 
@@ -1089,28 +697,21 @@ class Analyzer:
         m_stoi = np.nanmean(np.concatenate(stoi))
         self.direct_excitation = m_stoi / (1 - m_stoi)
 
-    def calc_direct_excitation_from_bleached(
-            self, datasets: Union[str, Sequence[str], None] = None,
-            stat: str = "median", print_summary: bool = True):
-        """Calculate dir. exc. correction factor from bleached donor traces
-
-        This takes those parts of traces where the donor is bleached, but
-        the acceptor isn't.
+    def _calc_direct_excitation_from_data(
+            self, datasets: Union[str, Sequence[str], None],
+            selector: Callable[[pd.DataFrame], pd.Series],
+            print_summary: bool):
+        """Helper function for direct excitation calculation from SM data
 
         Parameters
         ----------
         datasets
             dataset(s) to use. If `None`, use all.
-        stat
-            Statistic to use to determine bleaching steps. Has to be one that
-            was passed to via ``stats`` parameter to
-            :py:meth:`mass_changepoints`.
+        selector
+            Takes a DataFrame as an argument and returns a boolean Series
+            indicating which rows to use for calculation
         print_summary
             Print number of datapoints and result.
-
-        See also
-        --------
-        calc_direct_excitation
         """
         if isinstance(datasets, str):
             datasets = (datasets,)
@@ -1123,16 +724,11 @@ class Analyzer:
         for dset in datasets:
             for d in dset.values():
                 trc = d["donor"]
-                # search for donor excitation frames where donor is bleached
-                # but acceptor isn't
                 # TODO: Respect filters?
-                sel = ((trc["fret", "has_neighbor"] == 0) &
-                       (trc["fret", "a_seg"] == 0) &
-                       (trc["fret", "d_seg"] > 0) &
-                       (trc["fret", f"d_seg_{stat}"] <
-                        self.bleach_threshold["donor"]))
-                stois.append(trc.loc[sel, ("fret", "stoi_app")].values)
+                stois.append(trc.loc[selector(trc),
+                                     ("fret", "stoi_app")].to_numpy())
         stois = np.concatenate(stois)
+        stois = stois[np.isfinite(stois)]
 
         m_stoi = np.mean(stois)
         self.direct_excitation = m_stoi / (1 - m_stoi)
@@ -1145,42 +741,22 @@ class Analyzer:
             print(f"direct exc.: {self.direct_excitation:.4f} ± {err:.4f} "
                   f"(from {n_data} datapoints)")
 
-    def _calc_detection_eff_single(self, tracks, min_seg_len, stat):
-        gammas = pd.Series(np.NaN,
-                           index=tracks["donor"]["fret", "particle"].unique())
-
-        trc = self._apply_filters(tracks["donor"]).sort_values(
-            [("fret", "particle"), ("fret", "frame")])
-        trc_split = helper.split_dataframe(
-            trc, ("fret", "particle"),
-            [("donor", "mass"), ("acceptor", "mass"), ("fret", "a_seg")],
-            type="array_list", sort=False)
-        for p, t in trc_split:
-            fin_mask = np.isfinite(t[0]) & np.isfinite(t[1])
-            pre_mask = (t[2] == 0) & fin_mask
-            post_mask = (t[2] == 1) & fin_mask
-
-            i_dd_pre = t[0][pre_mask]
-            i_dd_post = t[0][post_mask]
-            i_da_pre = t[1][pre_mask]
-            i_da_post = t[1][post_mask]
-
-            if len(i_dd_pre) < min_seg_len or len(i_dd_post) < min_seg_len:
-                continue
-
-            gammas[p] = ((stat(i_da_pre) - stat(i_da_post)) /
-                         (stat(i_dd_post) - stat(i_dd_pre)))
-        return gammas
+    def _calc_detection_eff_single(self, *args, **kwargs):
+        raise NotImplementedError("`_calc_detection_eff_single` needs to be "
+                                  "implemented in child class")
 
     def calc_detection_eff(self,
+                           eff_app_thresh: float = 0.0, min_seg_len: int = 5,
+                           seg_stat: Callable[[np.ndarray], float
+                                              ] = np.nanmedian,
                            aggregate: Literal["all", "dataset",
                                               "individual"] = "all",
-                           aggregate_stat: Callable[[np.array], float
+                           aggregate_stat: Callable[[np.ndarray], float
                                                     ] = np.nanmedian,
-                           seg_stat: Callable[[np.array], float] = np.median,
-                           min_seg_len: int = 5,
                            datasets: Optional[Union[Iterable[str], str]
-                                              ] = None):
+                                              ] = None,
+                           print_summary: bool = False,
+                           **kwargs):
         r"""Calculate detection efficiency ratio of dyes
 
         The detection efficiency ratio is the ratio of decrease in acceptor
@@ -1211,11 +787,18 @@ class Analyzer:
 
         Parameters
         ----------
+        eff_app_thresh
+            Minimum apparent FRET efficiency for datapoints to be considered.
+            Detection efficiency factor calculation is the more robust, the
+            higher the FRET efficiency.
         min_seg_len
             How many data points need to be present before and after the
             bleach step to ensure a reliable calculation of the mean
             intensities. If there are fewer data points, a value of NaN will be
             assigned.
+        seg_stat
+            Statistic to use to determine fluorescence intensity before and
+            after acceptor photobleaching.
         aggregate
             If ``"individual"``, the :math:`\gamma` value for each track is
             stored and used to correct the values individually when calling
@@ -1228,9 +811,6 @@ class Analyzer:
             correction factor. A sensible example for such a function would be
             :py:func:`numpy.nanmean`. Beware that some :math:`\gamma` may be
             NaN.
-        seg_stat
-            Statistic to use to determine fluorescence intensity before and
-            after acceptor photobleaching.
         aggregate_stat
             If `aggregate` is not ``"individual"``, apply this function to
             per-track :math:`\gamma` values to determine the per-dataset or
@@ -1239,6 +819,8 @@ class Analyzer:
             If `aggregate` is not ``"individual"``, specify  datasets to
             compute correction factors for all datasets. If `None`, use all
             datasets.
+        print_summary
+            Print number of datapoints and result.
         """
         if isinstance(datasets, str):
             datasets = (datasets,)
@@ -1252,17 +834,32 @@ class Analyzer:
             g = {}
             for fid, d in dset.items():
                 g[fid] = self._calc_detection_eff_single(
-                    d, min_seg_len, seg_stat)
+                    d, eff_app_thresh, min_seg_len, seg_stat)
             gammas[k] = g
 
         if aggregate == "individual":
             self.detection_eff = gammas
         elif aggregate == "dataset":
-            self.detection_eff = {k: aggregate_stat(np.concat(v.values()))
-                                  for k, v in gammas.items()}
+            self.detection_eff = {
+                k: aggregate_stat(np.concatenate(list(v.values())))
+                for k, v in gammas.items()}
         else:
             g = [v2 for v in gammas.values() for v2 in v.values()]
             self.detection_eff = aggregate_stat(pd.concat(g))
+
+        if print_summary:
+            n_data = sum(np.sum(np.isfinite(i)) for h in gammas.values()
+                         for i in h.values())
+            n_part = sum(len(i) for h in gammas.values() for i in h.values())
+            if aggregate in {"individual", "dataset"}:
+                print(f"Calculated {n_data} values (of {n_part}).")
+            else:
+                print(f"detection eff.: {self.detection_eff:.4f} "
+                      f"(from {n_data} tracks)")
+
+    def _excitation_eff_filter(self, d: pd.DataFrame) -> pd.Series:
+        raise NotImplementedError("`_calc_excitation_eff_filter` needs to be "
+                                  "implemented in child class")
 
     def calc_excitation_eff(self, dataset: str, n_components: int = 1,
                             component: int = 0, random_seed: int = 0):
@@ -1317,7 +914,9 @@ class Analyzer:
         trc = {}
         for fid, d in self.sm_data[dataset].items():
             t = d["donor"]
-            t = t[(t["fret", "a_seg"] == 0) & (t["fret", "d_seg"] == 0)]
+            t = t[self._excitation_eff_filter(t) &
+                  np.isfinite(t["fret", "eff_app"]) &
+                  np.isfinite(t["fret", "stoi_app"])]
             trc[fid] = {"donor": self._apply_filters(t)}
 
         if n_components > 1:
@@ -1377,7 +976,9 @@ class Analyzer:
         trc = {}
         for fid, d in a.items():
             t = d["donor"]
-            t = t[(t["fret", "a_seg"] == 0) & (t["fret", "d_seg"] == 0)]
+            t = t[self._excitation_eff_filter(t) &
+                  np.isfinite(t["fret", "eff_app"]) &
+                  np.isfinite(t["fret", "stoi_app"])]
             trc[fid] = {"donor": self._apply_filters(t)}
 
         tmp_ana = self.__class__()
@@ -1400,11 +1001,15 @@ class Analyzer:
         self.detection_eff = (a - 1) / (a + b - 1)
         self.excitation_eff = a + b - 1
 
+    _detection_eff_particle_column = None
+
     def _fret_correction_single(self, tracks, gamma):
         t = tracks["donor"]
 
         if isinstance(gamma, pd.Series):
-            gamma = gamma.reindex(t["fret", "particle"]).to_numpy()
+            gamma = gamma.reindex(
+                t[self._detection_eff_particle_column]
+                ).to_numpy()
 
         i_da = t["acceptor", "mass"]
         i_dd = t["donor", "mass"]
@@ -1463,29 +1068,6 @@ class Analyzer:
                 else:
                     g = gammas[fid]
                 self._fret_correction_single(d, g)
-
-    def present_at_start(self, frame: Optional[int] = None,
-                         filter_reason: str = "at_start"):
-        """Remove tracks that are not present in the beginning
-
-        Parameters
-        ----------
-        frame
-            Start frame number. If `None`, use first donor excitation frame
-            except for the acceptor-only sample, where the first acceptor
-            excitation frame is used.
-        """
-        if frame is None:
-            if self.frame_selector is None:
-                raise ValueError("`frame` not specified and `frame_selector` "
-                                 "attribute not set.")
-            e_seq = self.frame_selector.eval_seq(-1)
-            frame = np.nonzero(e_seq == "d")[0][0]
-
-        # TODO: Do not apply to acceptor-only, maybe also not to donor-only
-        # This actually depends on whether acc or don excitation is first.
-        # Maybe don't apply to both?
-        self.query_particles(f"fret_frame == {frame}", reason=filter_reason)
 
     def filter_beam_shape_region(self, channel: Literal["donor", "accetpor"],
                                  thresh: float):
@@ -1553,6 +1135,9 @@ class Analyzer:
                          for c, s, e in zip(simg[fid], start_idx, stop_idx)]
                 self._image_mask_single(d, masks, channel, reason, reason_cnt)
 
+    _save_attrs = ["sm_data", "special_sm_data", "leakage",
+                   "direct_excitation", "detection_eff", "excitation_eff"]
+
     def save(self, file_prefix: str = "tracking"):
         """Save data to disk
 
@@ -1561,18 +1146,12 @@ class Analyzer:
         file_prefix
             Prefix of save files to save.
         """
-        DataStore(sm_data=self.sm_data,
-                  special_sm_data=self.special_sm_data,
-                  bleach_threshold=self.bleach_threshold,
-                  leakage=self.leakage,
-                  direct_excitation=self.direct_excitation,
-                  detection_eff=self.detection_eff,
-                  excitation_eff=self.excitation_eff
-                  ).save(file_prefix, mode="update")
+        s = {k: getattr(self, k) for k in self._save_attrs}
+        DataStore(**s).save(file_prefix, mode="update")
 
     @classmethod
     def load(cls, file_prefix: str = "tracking", reset_filters: bool = True
-             ) -> "Analyzer":
+             ) -> "BaseAnalyzer":
         """Load data from disk
 
         Parameters
@@ -1590,10 +1169,8 @@ class Analyzer:
         ds = DataStore.load(file_prefix)
 
         ret = cls()
-        for key in ("bleach_threshold", "flatfield",
-                    "leakage", "direct_excitation", "detection_eff",
-                    "excitation_eff", "segment_images", "sm_data",
-                    "special_sm_data", "sources"):
+        for key in [*cls._save_attrs, "flatfield", "segment_images",
+                    "sources"]:
             with contextlib.suppress(AttributeError):
                 setattr(ret, key, getattr(ds, key))
         with contextlib.suppress(AttributeError):
@@ -1603,7 +1180,7 @@ class Analyzer:
         return ret
 
     @classmethod
-    def from_tracker(cls, trk: tracker.Tracker) -> "Analyzer":
+    def from_tracker(cls, trk: tracker_base.BaseTracker) -> "BaseAnalyzer":
         ret = cls()
         for key in ("flatfield", "frame_selector", "segment_images", "sm_data",
                     "special_sm_data"):
