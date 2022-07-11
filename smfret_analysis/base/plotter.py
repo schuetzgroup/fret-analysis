@@ -11,7 +11,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 from sdt import plot
 
-from .analyzer import Analyzer
+from .analyzer_base import BaseAnalyzer
 from ..data_store import DataStore
 
 
@@ -81,7 +81,7 @@ class Plotter:
             x = []
             y = []
             for d in dset.values():
-                f = Analyzer._apply_filters(d["donor"])
+                f = BaseAnalyzer._apply_filters(d["donor"])
                 if frame is not None:
                     f = f[f["fret", "frame"] == frame]
                 sub_x = f[xdata].to_numpy(dtype=float)
@@ -192,7 +192,7 @@ class Plotter:
             for label, dset in items:
                 x = []
                 for d in dset.values():
-                    f = Analyzer._apply_filters(d["donor"])
+                    f = BaseAnalyzer._apply_filters(d["donor"])
                     if frame is not None:
                         f = f[f["fret", "frame"] == frame]
                     sub_x = f[data].to_numpy(dtype=float)
