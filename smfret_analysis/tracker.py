@@ -79,6 +79,8 @@ class Locator(ipywidgets.VBox):
             else:
                 opt_list.append((f, k))
         self._file_selector.options = opt_list
+        if opt_list and self._file_selector.index is None:
+            self._file_selector.index = 0
 
     def _file_changed(self, change=None):
         for f in self._opened:
@@ -122,6 +124,8 @@ class FRETLocator(Locator):
         self._dataset_selector.observe(self._dataset_changed, "value")
 
         self._dataset_selector.options = list(tracker.sources)
+        if tracker.sources and self._dataset_selector.index is None:
+            self._dataset_selector.index = 0
         self._locator.image_display.auto_scale()
 
     def _dataset_changed(self, change=None):
