@@ -431,7 +431,7 @@ class TestBaseTracker:
         for i in range(1, 4):
             ims = np.array([np.full((2, 3), i * j) for j in range(10, 31, 10)])
             ims[:, :, 2] += 1
-            imageio.mimwrite(tmp_path / f"f{i}.tif", ims)
+            imageio.mimwrite(tmp_path / f"f{i}.tif", list(ims))
 
         def check_results(actual, desired):
             assert actual.keys() == desired.keys()
