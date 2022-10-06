@@ -97,7 +97,6 @@ class DatasetCollection(gui.DatasetCollection):
                           "donor": {"source_id": 0, "roi": None}}
         self._excitationSeq = ""
         self._registrator = multicolor.Registrator()
-        self._trackLengthRange = [0, np.inf]
 
         self.propagateProperty("channels")
         self.propagateProperty("excitationSeq")
@@ -221,7 +220,7 @@ class ParticleList(gui.ListModel):
         ins = iter(sorted(nSet - dSet, reverse=True))
         curRm = next(rm, -1)
         curIns = next(ins, -1)
-        for i in range(len(self._data)-1, -1, -1):
+        for i in range(len(self._data) - 1, -1, -1):
             p = self._data[i]
             if curRm == p:
                 self.remove(i)
