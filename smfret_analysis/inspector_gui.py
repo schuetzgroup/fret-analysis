@@ -125,6 +125,13 @@ class ParticleList(gui.ListModel):
         self._showManuallyFiltered = True
         self.showManuallyFilteredChanged.connect(self._updateFiltered)
         self.filterTableChanged.connect(self._updateFiltered)
+        self._hideInterpolated = False
+        self.hideInterpolatedChanged.connect(
+            lambda: self.itemsChanged.emit(0, self.rowCount(),
+                                           ["dTrackData", "aTrackData",
+                                            "smData"]))
+
+    hideInterpolated = gui.SimpleQtProperty(bool)
 
     smDataChanged = QtCore.pyqtSignal()
 
@@ -194,6 +201,8 @@ class ParticleList(gui.ListModel):
         if role == "manualFilter":
             return int(self._filterTable.loc[n, "manual"])
         d = self._smData[self._smData["fret", "particle"] == n]
+        if self._hideInterpolated:
+            d = d[d["fret", "interp"] == 0]
         if role == "smData":
             return d
         if role in ("dTrackData", "aTrackData"):

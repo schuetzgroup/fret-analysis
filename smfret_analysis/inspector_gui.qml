@@ -93,6 +93,17 @@ ApplicationWindow {
                         value: [minTrackLenSel.value, maxTrackLenSel.value]
                     }
                     Switch {
+                        id: hideInterpolatedCheck
+                        text: "hide interpolated datapoints"
+                        checked: false
+                        Layout.columnSpan: 3
+                    }
+                    Binding {
+                        target: fileSel.currentModelData.particles
+                        property: "hideInterpolated"
+                        value: hideInterpolatedCheck.checked
+                    }
+                    Switch {
                         id: showLocCheck
                         text: "show localizations"
                         checked: true
