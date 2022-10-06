@@ -267,8 +267,9 @@ class Backend(QtCore.QObject):
         prefix, fileVer = self.prefixRe.match(self._filePath.name).groups()
         fileVer = int(fileVer)
 
-        ld = DataStore.load(prefix, loc=False, segment_images=False,
-                            flatfield=False, version=fileVer)
+        with io.chdir(self._filePath.parent):
+            ld = DataStore.load(prefix, loc=False, segment_images=False,
+                                flatfield=False, version=fileVer)
 
         with contextlib.suppress(AttributeError, KeyError):
             self.minTrackLength = ld.filter["track_len"]["min"]
@@ -278,7 +279,11 @@ class Backend(QtCore.QObject):
         self.datasets.clear()
         self.datasets.excitationSeq = ld.tracker.excitation_seq
         self.datasets.registrator = ld.tracker.registrator
-        self.datasets.dataDir = str(ld.data_dir)
+        if ld.data_dir.is_absolute():
+            self.datasets.dataDir = str(ld.data_dir)
+        else:
+            self.datasets.dataDir = str(
+                (self._filePath.parent / ld.data_dir).resolve())
 
         for key, fileList in ld.sources.items():
             if not fileList:
