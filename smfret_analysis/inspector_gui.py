@@ -197,7 +197,7 @@ class ParticleList(gui.ListModel):
         if role == "smData":
             return d
         if role in ("dTrackData", "aTrackData"):
-            d = d["donor" if role[0] == "d" else "acceptor"]
+            d = d["donor" if role[0] == "d" else "acceptor"].copy()
             d["particle"] = 0  # Fake particle number for TrackDisplay
             d["size"] = 3.0  # Size is often undefined. Just draw large circle
             return d
