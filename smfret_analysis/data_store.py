@@ -231,7 +231,7 @@ class DataStore:
         for src in ret["sources"], ret["special_sources"]:
             for k, v in src.items():
                 if isinstance(v, list):
-                    src[k] = {n: i for n, i in enumerate(v)}
+                    src[k] = {n: tuple(i) for n, i in enumerate(v)}
 
         all_src = {**ret["sources"], **ret["special_sources"]}
 
@@ -253,7 +253,8 @@ class DataStore:
                         new_key = k[1:-len(suffix)]
                         loaded = s[k]
                         src = all_src[new_key]
-                        fname_map = pd.Series(src.keys(), index=src.values())
+                        fname_map = pd.Series(src.keys(),
+                                              index=list(src.values()))
                         loaded.index = loaded.index.set_levels(
                             fname_map[loaded.index.levels[0]], level=0)
                         if ("fret", "exc_type") in loaded:
