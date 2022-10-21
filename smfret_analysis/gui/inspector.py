@@ -13,9 +13,9 @@ import warnings
 from PyQt5 import QtCore, QtQml, QtQuick, QtWidgets
 import numpy as np
 import pandas as pd
-from sdt import fret, gui, io, multicolor
+from sdt import gui, io, multicolor
 
-from .data_store import DataStore
+from ..data_store import DataStore
 
 
 class Dataset(gui.Dataset):
