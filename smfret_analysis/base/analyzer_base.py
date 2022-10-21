@@ -197,18 +197,17 @@ class BaseAnalyzer:
     :py:meth:`_calc_apparent_values_single`)..
     """
 
-    @classmethod
     def _calc_apparent_values_single(
-            cls, tracks: Mapping[Literal["donor", "acceptor"], pd.DataFrame],
+            self, tracks: Mapping[Literal["donor", "acceptor"], pd.DataFrame],
             a_mass_interp: str, skip_neighbors: bool):
         d_tracks = tracks["donor"]
         a_tracks = tracks["acceptor"]
 
-        a_mask = cls._apply_filters(a_tracks, type="mask",
-                                    skip_neighbors=skip_neighbors)
+        a_mask = self._apply_filters(a_tracks, type="mask",
+                                     skip_neighbors=skip_neighbors)
 
         a_mass = []
-        for col in cls._app_vals_columns:
+        for col in self._app_vals_columns:
             # Go through each column and calculate intensity upon acceptor
             # excitation if the column entry is >= 0
             a_filtered = a_tracks[a_mask & (a_tracks[col] >= 0)]

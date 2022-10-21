@@ -283,6 +283,8 @@ class IntramolecularAnalyzer(base.IntramolecularAnalyzer, BaseAnalyzerNbUI):
                                 self._segment_fig.canvas, p_label])
 
 
+class IntermolecularAnalyzer(base.IntermolecularAnalyzer, BaseAnalyzerNbUI):
+    pass
 
 
 class DensityPlots(ipywidgets.Box):
