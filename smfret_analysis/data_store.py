@@ -231,7 +231,8 @@ class DataStore:
         for src in ret["sources"], ret["special_sources"]:
             for k, v in src.items():
                 if isinstance(v, list):
-                    src[k] = {n: tuple(i) for n, i in enumerate(v)}
+                    src[k] = {n: i if isinstance(i, str) else tuple(i)
+                              for n, i in enumerate(v)}
 
         all_src = {**ret["sources"], **ret["special_sources"]}
 
