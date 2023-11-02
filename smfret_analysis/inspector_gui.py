@@ -30,7 +30,7 @@ class Dataset(gui.Dataset):
         self.excitationSeqChanged.connect(self._imageDataChanged)
 
     channels = gui.SimpleQtProperty("QVariantMap")
-    registrator = gui.SimpleQtProperty(QtCore.QVariant)
+    registrator = gui.SimpleQtProperty("QVariant")
 
     excitationSeqChanged = QtCore.pyqtSignal()
     """:py:attr:`excitationSeq` changed"""
@@ -55,16 +55,8 @@ class Dataset(gui.Dataset):
     def get(self, index, role):
         if not (0 <= index <= self.rowCount() and role in self.roles):
             return None
-        if role == "key":
-            k = tuple(str(self.get(index, r)) for r in self.fileRoles)
-            if len(k) == 1:
-                return k[0]
-            return k
         if role == "display":
-            k = self.get(index, "key")
-            if isinstance(k, str):
-                k = (k,)
-            return "; ".join(k)
+            return "; ".join(str(self.get(index, r)) for r in self.fileRoles)
         if role in ("ddImg", "daImg", "aaImg"):
             r = "donor" if role == "ddImg" else "acceptor"
             chan = self.channels[r]
@@ -313,7 +305,7 @@ class Backend(QtCore.QObject):
             modelFileList = []
             trc = ld.tracks[key]
             # Compute apparent eff and stoi
-            ana = fret.SmFRETAnalyzer(trc)
+            ana = fret.SmFRETAnalyzer(trc, reset_filters=False)
             ana.calc_fret_values(a_mass_interp="next", skip_neighbors=False)
             trc = ana.tracks
             for trcKey, files in fileList.items():
@@ -321,6 +313,7 @@ class Backend(QtCore.QObject):
                     entry = {"source_0": files}
                 else:
                     entry = {f"source_{i}": f for i, f in enumerate(files)}
+                entry["key"] = trcKey
                 pList = ParticleList(ds)
                 pList.excitationSeq = ds.excitationSeq
                 try:
@@ -349,30 +342,28 @@ class Backend(QtCore.QObject):
     @QtCore.pyqtSlot()
     @QtCore.pyqtSlot(bool)
     def save(self, exportSpreadsheet=False):
-        if not exportSpreadsheet:
-            with self._filePath.open() as yf:
-                ld = io.yaml.safe_load(yf)
-            ld["filter"] = {"track_len": {"min": self.minTrackLength,
-                                          "max": self.maxTrackLength}}
-            with self._filePath.open("w") as yf:
-                io.yaml.safe_dump(ld, yf)
+        prefix, fileVer = self.prefixRe.match(self._filePath.name).groups()
+        fileVer = int(fileVer)
+
+        with io.chdir(self._filePath.parent):
+            ld = DataStore.load(prefix, loc=False, segment_images=False,
+                                flatfield=False, version=fileVer)
+        ld.filter = {"track_len": {"min": self.minTrackLength,
+                                   "max": self.maxTrackLength}}
 
         with warnings.catch_warnings():
             import tables
             warnings.simplefilter("ignore", tables.NaturalNameWarning)
 
-            s = None
             ew = None
             try:
-                s = pd.HDFStore(self._filePath.with_suffix(".h5"))
                 if exportSpreadsheet:
                     ew = pd.ExcelWriter(self._filePath.with_suffix(".xlsx"))
                 for i in range(self.datasets.rowCount()):
                     key = self.datasets.get(i, "key")
-                    h5_key = f"{key}_trc"
                     ds = self.datasets.get(i, "dataset")
 
-                    loaded = s.get(h5_key)
+                    loaded = ld.tracks[key]
                     filt_arr = np.full((len(loaded), 2), -1)
                     idx_lvl_0 = loaded.index.get_level_values(0)
                     for j in range(ds.rowCount()):
@@ -397,12 +388,10 @@ class Backend(QtCore.QObject):
                     # not work with table format…
                     if exportSpreadsheet:
                         loaded.to_excel(ew, sheet_name=key)
-                    else:
-                        s.put(h5_key,
-                              loaded.astype({("fret", "exc_type"): str}))
+                if not exportSpreadsheet:
+                    with io.chdir(self._filePath.parent):
+                        ld.save(prefix, mode="update")
             finally:
-                if s:
-                    s.close()
                 if ew:
                     ew.close()
 
