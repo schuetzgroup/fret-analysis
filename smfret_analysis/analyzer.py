@@ -76,9 +76,13 @@ class Analyzer:
         self.analyzers = {
             k: fret.SmFRETAnalyzer(v, reset_filters=reset_filters)
             for k, v in ds.tracks.items()}
-        self.special_analyzers = {
-            k: fret.SmFRETAnalyzer(v, reset_filters=reset_filters)
-            for k, v in ds.special_tracks.items()}
+        try:
+            self.special_analyzers = {
+                k: fret.SmFRETAnalyzer(v, reset_filters=reset_filters)
+                for k, v in ds.special_tracks.items()}
+        except AttributeError:
+            # ds is missing `special_tracks`
+            self.special_analyzers = {}
         self.sources = ds.sources
         self.special_sources = ds.special_sources
         self.segment_images = ds.segment_images
