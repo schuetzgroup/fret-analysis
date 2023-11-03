@@ -74,13 +74,11 @@ class Analyzer:
         self.rois = ds.rois
         self.frame_selector = ds.tracker.frame_selector
         self.analyzers = {
-            k: fret.SmFRETAnalyzer(v) for k, v in ds.tracks.items()}
+            k: fret.SmFRETAnalyzer(v, reset_filters=reset_filters)
+            for k, v in ds.tracks.items()}
         self.special_analyzers = {
-            k: fret.SmFRETAnalyzer(v) for k, v in ds.special_tracks.items()}
-        if reset_filters:
-            for a in itertools.chain(self.analyzers.values(),
-                                     self.special_analyzers.values()):
-                a.reset_filters()
+            k: fret.SmFRETAnalyzer(v, reset_filters=reset_filters)
+            for k, v in ds.special_tracks.items()}
         self.sources = ds.sources
         self.special_sources = ds.special_sources
         self.segment_images = ds.segment_images
