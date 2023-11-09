@@ -62,6 +62,38 @@ class DataStore:
             self.data_dir = Path(data.pop("data_dir"))
         self.__dict__.update(data)
 
+    @staticmethod
+    def copy_files(old_prefix: str, new_prefix: str, version: int = 14):
+        """Copy save files to a new prefix
+
+        Parameters
+        ----------
+        old_prefix
+            File prefix to copy from. See also :py:meth:`save` and :py:meth:`load`.
+        new_prefix
+            File prefix to copy to.
+        version
+            Which file version to copy. Currently supports only v014.
+        """
+        if version != 14:
+            raise ValueError("only v014 files can be copied for now")
+
+        import shutil
+
+        for suffix in (
+            "loc.h5",
+            "tracks.h5",
+            "seg_img.npz",
+            "flat_donor.npz",
+            "flat_acceptor.npz",
+            "yaml"
+        ):
+            src = Path(f"{old_prefix}-v014.{suffix}")
+            if not src.exists():
+                continue
+            dst = f"{new_prefix}-v014.{suffix}"
+            shutil.copy(src, dst)
+
     def save(self, file_prefix: str = "tracking", mode: str = "write"):
         """Save data to disk
 
