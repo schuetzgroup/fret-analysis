@@ -7,12 +7,7 @@ import collections
 import contextlib
 import itertools
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Sequence, Union
-try:
-    from typing import Literal
-except ImportError:
-    # Python < 3.8
-    from .typing_extensions import Literal
+from typing import Any, Callable, Dict, Literal, Optional, Sequence, Union
 import warnings
 
 from IPython.display import display

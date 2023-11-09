@@ -5,12 +5,7 @@
 """Provide :py:class:`Analyzer` as a Jupyter notebook UI for smFRET analysis"""
 import itertools
 from io import BytesIO
-from typing import Any, Callable, Dict, Iterable, Optional, Sequence, Union
-try:
-    from typing import Literal
-except ImportError:
-    # Python < 3.8
-    from .typing_extensions import Literal
+from typing import Any, Callable, Dict, Iterable, Literal, Optional, Sequence, Union
 
 import ipywidgets
 import matplotlib as mpl
