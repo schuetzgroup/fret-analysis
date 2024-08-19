@@ -20,3 +20,4 @@ __pycache__
 !/scripts
 !/README.md
 !/LICENSES
+!/pyproject.toml

@@ -1,0 +1,52 @@
+[project]
+name = "fret-analysis"
+description = "Tools for analyzing single-molecule FRET data"
+authors = [
+    { name = "Lukas Schrangl", email = "lukas.schrangl@boku.ac.at" }
+]
+dynamic = ["version"]
+readme = "README.md"
+license-files = { globs = ["LICENSES/*.txt"] }
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Science/Research",
+
+    "License :: OSI Approved :: BSD License",
+
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+requires-python = ">= 3.10"
+dependencies = [
+    "ipywidgets",
+    "matplotlib",
+    "numpy",
+    "pandas",
+    "pims",
+    "scipy",
+    "sdt-python",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.urls]
+Repository = "https://github.com/schuetzgroup/fret-analysis"
+
+[tool.rye]
+managed = true
+dev-dependencies = []
+
+[tool.hatch.version]
+path = "smfret_analysis/version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["smfret_analysis", "bulkfret_analysis"]
