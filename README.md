@@ -28,7 +28,7 @@ please [cite](https://doi.org/10.5281/zenodo.4604567) the software.
 
 ## Requirements
 
-- Python >= 3.7
+- Python >= 3.10
 - Jupyter Notebook or Lab
 - sdt-python >= 17.0
 - numpy
