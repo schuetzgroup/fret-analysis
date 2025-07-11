@@ -21,7 +21,7 @@ If you use this software in a project resulting in a scientific publication, ple
 - Install the [uv](https://docs.astral.sh/uv/) Python package manager.
   Linux users can use their distribution's package management system to install `uv`.
 - Create a new folder.
-- Download Jupyter notebooks from [notebooks](https://github.com/schuetzgroup/fret-analysis/tree/master/notebooks) into the folder.
+- Download [Jupyter notebooks for the analysis](https://github.com/schuetzgroup/fret-analysis/tree/master/notebooks) into the folder.
 - Navigate into the folder it using a command line prompt.
 - Initialize `uv` in this folder by executing
 
