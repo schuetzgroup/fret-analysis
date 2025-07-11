@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Lukas Schrangl <lukas.schrangl@boku.ac.at>
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 [project]
 name = "fret-analysis"
 description = "Tools for analyzing single-molecule FRET data"
