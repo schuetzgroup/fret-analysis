@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2020 Lukas Schrangl <lukas.schrangl@tuwien.ac.at>
 SPDX-License-Identifier: CC-BY-4.0
 -->
 
-# Single molecule FRET analysis
+# Single-molecule FRET analysis
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.4604567.svg)](https://doi.org/10.5281/zenodo.4604567)
 
@@ -18,24 +18,34 @@ If you use this software in a project resulting in a scientific publication, ple
 
 ## Suggested workflow:
 
-- Clone repository
-- Copy Jupyter notebooks from the `notebooks` folder to the root (this) folder.
-- Copy your data into the `data` folder.
-- Open `01. Tracking` notebook. Run each cell and adjust file paths and
-  parameters as needed.
+- Install the [uv](https://docs.astral.sh/uv/) Python package manager.
+  Linux users can use their distribution's package management system to install `uv`.
+- Create a new folder.
+- Download Jupyter notebooks from [notebooks](https://github.com/schuetzgroup/fret-analysis/tree/master/notebooks) into the folder.
+- Navigate into the folder it using a command line prompt.
+- Initialize `uv` in this folder by executing
+
+  ```
+  uv init --bare
+  ```
+
+- Install the FRET analysis python package, either from PyPI,
+
+  ```
+  uv add fret-analysis
+  ```
+
+  or from Github,
+
+  ```
+  uv add git+https://github.com/schuetzgroup/fret-analysis.git
+  ```
+
+- Start Jupyter Lab,
+  ```
+  uv run --with jupyter jupyter lab
+  ```
+
+- Open `01. Tracking` notebook. Run each cell and adjust file paths and parameters as needed.
 - When finished, do the same using the `02. Filter` notebook.
 - Summary plots can be created with the `03. Plots` notebook.
-
-
-## Requirements
-
-- Python >= 3.10
-- Jupyter Notebook or Lab
-- sdt-python >= 17.0
-- numpy
-- scipy
-- pandas
-- matplotlib
-- pims
-- ipympl
-- OpenCV
