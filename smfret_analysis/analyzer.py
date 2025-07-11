@@ -868,7 +868,7 @@ class Analyzer:
             self._thresholder = nbui.Thresholder()
 
         self._thresholder.image_selector.images = {
-            self.sources[did][fid]: v[0]
+            str(self.sources[did][fid]): v[0]
             for did, dset in self.segment_images.items()
             for fid, v in dset.items()}
 
