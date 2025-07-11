@@ -28,11 +28,14 @@ dependencies = [
     "ipympl",
     "ipywidgets",
     "matplotlib",
+    "numba",
     "numpy",
     "pandas",
     "pims",
+    "scikit-learn",
     "scipy",
     "sdt-python",
+    "trackpy",
 ]
 
 [build-system]
