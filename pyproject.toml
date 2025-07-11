@@ -48,5 +48,8 @@ Repository = "https://github.com/schuetzgroup/fret-analysis"
 [tool.hatch.version]
 path = "smfret_analysis/version.py"
 
+[tool.hatch.build.targets.sdist]
+include = ["notebooks", "scripts", "smfret_analysis", "bulkfret_analysis"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["smfret_analysis", "bulkfret_analysis"]
