@@ -45,10 +45,6 @@ build-backend = "hatchling.build"
 [project.urls]
 Repository = "https://github.com/schuetzgroup/fret-analysis"
 
-[tool.rye]
-managed = true
-dev-dependencies = []
-
 [tool.hatch.version]
 path = "smfret_analysis/version.py"
 
