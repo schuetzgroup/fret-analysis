@@ -6,13 +6,15 @@ import subprocess
 
 import sdt
 
-
 __version__ = "3.1"
 
 
 def print_info():
     try:
-        git_rev = subprocess.check_output(["git", "describe", "--always"])
+        # capture output so that git errors are not printed in notebooks
+        git_rev = subprocess.check_output(
+            ["git", "describe", "--always"], capture_output=True
+        )
         git_rev = git_rev.decode().strip()
     except Exception:
         git_rev = "unknown"
