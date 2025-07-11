@@ -1,0 +1,5 @@
+version = 1
+SPDX-PackageName = "fret-analysis"
+SPDX-PackageSupplier = "Lukas Schrangl <lukas.schrangl@tuwien.ac.at>"
+SPDX-PackageDownloadLocation = "https://github.com/schuetzgroup/fret-analysis"
+annotations = []
