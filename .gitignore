@@ -10,14 +10,5 @@ __pycache__
 *.kdev4
 .directory
 *.kate-swp
-
-# Ignore everything in the root dir since there will be data
-/*
-# Whitelist things that should be in git
-!/bulkfret_analysis
-!/notebooks
-!/smfret_analysis
-!/scripts
-!/README.md
-!/LICENSES
-!/pyproject.toml
+.vscode
+uv.lock
