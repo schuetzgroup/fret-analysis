@@ -599,7 +599,7 @@ class Analyzer:
                                       Literal["individual"]] = np.nanmedian,
                            aggregate: Literal["dataset", "all"] = "dataset",
                            dataset: Optional[str] = None):
-        r"""Calculate detection efficieny correction factor
+        r"""Calculate detection efficiency correction factor
 
         The detection efficiency ratio is the ratio of decrease in acceptor
         brightness to the increase in donor brightness upon acceptor
@@ -727,7 +727,7 @@ class Analyzer:
 
     def calc_excitation_eff(self, dataset: str, n_components: int = 1,
                             component: int = 0):
-        """Calculate excitation efficieny correction factor
+        """Calculate excitation efficiency correction factor
 
         Utilize data with known 1:1 stoichiometry to this end. To find the
         right parameters for this call, use
