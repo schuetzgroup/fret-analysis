@@ -24,13 +24,15 @@ class InspectDataset(gui.Dataset):
         self._channels = {}
         self._frameSel = multicolor.FrameSelector("")
         self._registrator = multicolor.Registrator()
+        self._dataDir = ""
 
         self.channelsChanged.connect(self._imageDataChanged)
         self.registratorChanged.connect(self._imageDataChanged)
         self.excitationSeqChanged.connect(self._imageDataChanged)
 
     channels = gui.SimpleQtProperty("QVariantMap")
-    registrator = gui.SimpleQtProperty("QVariant")
+    registrator = gui.SimpleQtProperty(object)
+    dataDir = gui.SimpleQtProperty(str)
 
     excitationSeqChanged = QtCore.Signal()
     """:py:attr:`excitationSeq` changed"""
@@ -90,14 +92,17 @@ class InspectDatasetCollection(gui.DatasetCollection):
                           "donor": {"source_id": 0, "roi": None}}
         self._excitationSeq = ""
         self._registrator = multicolor.Registrator()
+        self._dataDir = ""
 
         self.propagateProperty("channels")
         self.propagateProperty("excitationSeq")
         self.propagateProperty("registrator")
+        self.propagateProperty("dataDir")
 
     channels = gui.SimpleQtProperty("QVariantMap")
     excitationSeq = gui.SimpleQtProperty(str)
-    registrator = gui.SimpleQtProperty(QtCore.QVariant)
+    registrator = gui.SimpleQtProperty(object)
+    dataDir = gui.SimpleQtProperty(str)
 
 
 class ParticleList(gui.ListModel):
