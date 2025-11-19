@@ -67,7 +67,7 @@ ApplicationWindow {
                         Layout.columnSpan: 3
                     }
                     Binding {
-                        target: fileSel.currentModelData.particles
+                        target: fileSel.particles != null ? fileSel.particles : null
                         property: "showManuallyFiltered"
                         value: showManuallyFilteredCheck.checked
                     }
@@ -88,7 +88,7 @@ ApplicationWindow {
                         value: 10000
                     }
                     Binding {
-                        target: fileSel.currentModelData.particles
+                        target: fileSel.particles != null ? fileSel.particles : null
                         property: "trackLengthRange"
                         value: [minTrackLenSel.value, maxTrackLenSel.value]
                     }
@@ -99,7 +99,7 @@ ApplicationWindow {
                         Layout.columnSpan: 3
                     }
                     Binding {
-                        target: fileSel.currentModelData.particles
+                        target: fileSel.particles != null ? fileSel.particles : null
                         property: "hideInterpolated"
                         value: hideInterpolatedCheck.checked
                     }
@@ -115,7 +115,7 @@ ApplicationWindow {
                         checked: true
                         Layout.columnSpan: 3
                         onCheckedChanged: {
-                            backend.plot(particleSel.currentModelData.smData, checked)
+                            backend.plot(particleSel.smData, checked)
                         }
                     }
                 }
@@ -139,16 +139,14 @@ ApplicationWindow {
                         icon.name: "go-first"
                         Layout.fillWidth: true
                         onClicked: {
-                            frameSel.value = backend.firstFrame(
-                                particleSel.currentModelData.dTrackData)
+                            frameSel.value = backend.firstFrame(particleSel.dTrackData)
                         }
                     }
                     ToolButton {
                         icon.name: "go-last"
                         Layout.fillWidth: true
                         onClicked: {
-                            frameSel.value = backend.lastFrame(
-                                particleSel.currentModelData.dTrackData)
+                            frameSel.value = backend.lastFrame(particleSel.dTrackData)
                         }
                     }
                 }
@@ -213,8 +211,7 @@ ApplicationWindow {
                         onClicked: {
                             // check whether we need to manually go to next
                             // particle
-                            fileSel.currentModelData.particles.manuallyFilterTrack(
-                                particleSel.currentIndex, false)
+                            fileSel.particles.manuallyFilterTrack(particleSel.currentIndex, false)
                             particleSelGroup.nextParticle()
                         }
                     }
@@ -227,8 +224,7 @@ ApplicationWindow {
                             if (showManuallyFilteredCheck.checked ||
                                     particleSel.currentIndex == particleSel.count - 1)
                                 goNext = true
-                            fileSel.currentModelData.particles.manuallyFilterTrack(
-                                particleSel.currentIndex, true)
+                            fileSel.particles.manuallyFilterTrack(particleSel.currentIndex, true)
                             if (goNext)
                                 particleSelGroup.nextParticle()
                         }
@@ -236,7 +232,7 @@ ApplicationWindow {
                     Label {
                         Layout.columnSpan: 2
                         Layout.alignment: Qt.AlignCenter
-                        text: "filter: " + filterText(particleSel.currentModelData.manualFilter)
+                        text: "filter: " + filterText(particleSel.manualFilter)
 
                         function filterText(n) {
                             switch (n) {
@@ -263,34 +259,85 @@ ApplicationWindow {
                 }
                 Item { width: 5 }
                 Label { text: "file" }
-                Sdt.ModelComboBox {
+                ComboBox {
                     id: fileSel
+
+                    property var ddImg: null
+                    property var daImg: null
+                    property var aaImg: null
+                    property var particles: null
 
                     model: datasetSel.currentDataset
                     textRole: "display"
-                    modelDataRole: ["particles", "ddImg", "daImg", "aaImg"]
-                    selectFirstOnReset: true
+                    valueRole: "id"
                     Layout.fillWidth: true
+
+                    function _setProps() {
+                        if (model) {
+                            ddImg = model.get(currentIndex, "ddImg")
+                            daImg = model.get(currentIndex, "daImg")
+                            aaImg = model.get(currentIndex, "aaImg")
+                            particles = model.get(currentIndex, "particles")
+                        } else {
+                            ddImg = null
+                            daImg = null
+                            aaImg = null
+                            particles = null
+                        }
+                    }
+
+                    onModelChanged: _setProps()
+                    onCurrentIndexChanged: _setProps()
                 }
                 Item { width: 5 }
                 Label { text: "particle" }
-                Sdt.ModelComboBox {
+                ComboBox {
                     id: particleSel
 
-                    model: fileSel.currentModelData.particles
+                    property int number: -1
+                    property var smData: null
+                    property var dTrackData: null
+                    property var aTrackData: null
+                    property var manualFilter: null
+
+                    property var _plotDummy: backend.plot(smData, scatterCheck.checked)
+
                     textRole: "display"
-                    modelDataRole: ["number", "smData", "dTrackData", "aTrackData", "manualFilter"]
-                    onCurrentModelDataChanged: {
-                        backend.plot(currentModelData.smData, scatterCheck.checked)
+                    model: fileSel.particles
+
+                    function _setProps() {
+                        if (model) {
+                            number = model.get(currentIndex, "number")
+                            smData = model.get(currentIndex, "smData")
+                            dTrackData = model.get(currentIndex, "dTrackData")
+                            aTrackData = model.get(currentIndex, "aTrackData")
+                            manualFilter = model.get(currentIndex, "manualFilter")
+                        } else {
+                            number = -1
+                            smData = null
+                            dTrackData = null
+                            aTrackData = null
+                            manualFilter = null
+                        }
+                    }
+
+                    onModelChanged: _setProps()
+                    onCurrentIndexChanged: _setProps()
+                    Connections {
+                        target: particleSel.model != null ? particleSel.model : null
+                        function onItemsChanged() { particleSel._setProps() }
+                        function onCountChanged() { particleSel._setProps() }
+                    }
+                    onDTrackDataChanged: {
                         if (autoFirstCheck.checked)
-                            frameSel.value = backend.firstFrame(currentModelData.dTrackData)
+                            frameSel.value = backend.firstFrame(dTrackData)
                     }
                 }
                 Item { width: 5 }
                 Label { text: "frame" }
                 Sdt.EditableSpinBox {
                     id: frameSel
-                    to: backend.frameCount(fileSel.currentModelData)
+                    to: backend.frameCount(fileSel.ddImg)
                 }
             }
             GridLayout {
@@ -309,10 +356,9 @@ ApplicationWindow {
                     Layout.alignment: Qt.AlignCenter
                 }
                 Sdt.ImageDisplay {
-                    image: backend.image(fileSel.currentModelData.ddImg,
-                                         frameSel.value)
+                    image: backend.image(fileSel.ddImg, frameSel.value)
                     overlays: Sdt.TrackDisplay {
-                        trackData: particleSel.currentModelData.dTrackData
+                        trackData: particleSel.dTrackData
                         currentFrame: frameSel.value
                         visible: showLocCheck.checked
                     }
@@ -320,10 +366,9 @@ ApplicationWindow {
                     Layout.fillHeight: true
                 }
                 Sdt.ImageDisplay {
-                    image: backend.image(fileSel.currentModelData.daImg,
-                                         frameSel.value)
+                    image: backend.image(fileSel.daImg, frameSel.value)
                     overlays: Sdt.TrackDisplay {
-                        trackData: particleSel.currentModelData.aTrackData
+                        trackData: particleSel.aTrackData
                         currentFrame: frameSel.value
                         visible: showLocCheck.checked
                     }
@@ -331,10 +376,9 @@ ApplicationWindow {
                     Layout.fillHeight: true
                 }
                 Sdt.ImageDisplay {
-                    image: backend.image(fileSel.currentModelData.aaImg,
-                                         frameSel.value)
+                    image: backend.image(fileSel.aaImg, frameSel.value)
                     overlays: Sdt.TrackDisplay {
-                        trackData: particleSel.currentModelData.aTrackData
+                        trackData: particleSel.aTrackData
                         currentFrame: frameSel.value
                         visible: showLocCheck.checked
                     }

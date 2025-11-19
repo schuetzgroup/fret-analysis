@@ -401,11 +401,11 @@ class Backend(QtCore.QObject):
                     ew.close()
 
     @QtCore.Slot("QVariant", result=int)
-    def frameCount(self, fileData):
+    def frameCount(self, imageSeq):
         try:
-            return len(fileData.toVariant()["ddImg"])
+            return len(imageSeq)
         except (AttributeError, TypeError):
-            # e.g. fileData is None, ddImg is None
+            # e.g. imageSeq is None, ddImg is None
             return 0
 
     @QtCore.Slot("QVariant", result=int)
