@@ -42,12 +42,21 @@ dependencies = [
     "trackpy",
 ]
 
+[project.urls]
+Repository = "https://github.com/schuetzgroup/fret-analysis"
+
+[project.optional-dependencies]
+gui = [
+    "sdt-python[gui]>=20.1.0",
+    "pyside6>=6.10.0",
+]
+
+[project.gui-scripts]
+smfret-inspector = "smfret_analysis.inspector_gui:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[project.urls]
-Repository = "https://github.com/schuetzgroup/fret-analysis"
 
 [tool.hatch.version]
 path = "smfret_analysis/version.py"
