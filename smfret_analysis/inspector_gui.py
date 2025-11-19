@@ -5,14 +5,14 @@
 import argparse
 import contextlib
 import enum
-from pathlib import Path
 import re
 import sys
 import warnings
+from pathlib import Path
 
-from PyQt5 import QtCore, QtQml, QtQuick, QtWidgets
 import numpy as np
 import pandas as pd
+from PySide6 import QtCore, QtQml, QtQuick, QtWidgets
 from sdt import fret, gui, io, multicolor
 
 from .data_store import DataStore
@@ -32,10 +32,10 @@ class Dataset(gui.Dataset):
     channels = gui.SimpleQtProperty("QVariantMap")
     registrator = gui.SimpleQtProperty("QVariant")
 
-    excitationSeqChanged = QtCore.pyqtSignal()
+    excitationSeqChanged = QtCore.Signal()
     """:py:attr:`excitationSeq` changed"""
 
-    @QtCore.pyqtProperty(str, notify=excitationSeqChanged)
+    @QtCore.Property(str, notify=excitationSeqChanged)
     def excitationSeq(self) -> str:
         """Excitation sequence. See :py:class:`multicolor.FrameSelector` for
         details. No error checking es performend here.
@@ -51,7 +51,7 @@ class Dataset(gui.Dataset):
             d["particles"].frameSelector = self._frameSel
         self.excitationSeqChanged.emit()
 
-    @QtCore.pyqtSlot(int, str, result=QtCore.QVariant)
+    @QtCore.Slot(int, str, result="QVariant")
     def get(self, index, role):
         if not (0 <= index <= self.rowCount() and role in self.roles):
             return None
@@ -125,9 +125,9 @@ class ParticleList(gui.ListModel):
 
     hideInterpolated = gui.SimpleQtProperty(bool)
 
-    smDataChanged = QtCore.pyqtSignal()
+    smDataChanged = QtCore.Signal()
 
-    @QtCore.pyqtProperty(QtCore.QVariant, notify=smDataChanged)
+    @QtCore.Property(object, notify=smDataChanged)
     def smData(self):
         return self._smData
 
@@ -147,9 +147,9 @@ class ParticleList(gui.ListModel):
 
         self.smDataChanged.emit()
 
-    excitationSeqChanged = QtCore.pyqtSignal()
+    excitationSeqChanged = QtCore.Signal()
 
-    @QtCore.pyqtProperty(QtCore.QVariant, notify=excitationSeqChanged)
+    @QtCore.Property(object, notify=excitationSeqChanged)
     def excitationSeq(self):
         return self._frameSel.excitation_seq
 
@@ -161,9 +161,9 @@ class ParticleList(gui.ListModel):
         self.itemsChanged.emit(0, self.rowCount(),
                                ["dTrackData", "aTrackData"])
 
-    trackLengthRangeChanged = QtCore.pyqtSignal()
+    trackLengthRangeChanged = QtCore.Signal()
 
-    @QtCore.pyqtProperty(list, notify=trackLengthRangeChanged)
+    @QtCore.Property(list, notify=trackLengthRangeChanged)
     def trackLengthRange(self):
         return self._trackLengthRange
 
@@ -180,7 +180,7 @@ class ParticleList(gui.ListModel):
         self.trackLengthRangeChanged.emit()
 
     showManuallyFiltered = gui.SimpleQtProperty(bool)
-    filterTable = gui.SimpleQtProperty(QtCore.QVariant, comp=None)
+    filterTable = gui.SimpleQtProperty(object, comp=None)
 
     def get(self, index, role):
         if not 0 <= index < self.rowCount():
@@ -203,7 +203,7 @@ class ParticleList(gui.ListModel):
             d["size"] = 3.0  # Size is often undefined. Just draw large circle
             return d
 
-    @QtCore.pyqtSlot(int, bool)
+    @QtCore.Slot(int, bool)
     def manuallyFilterTrack(self, index, reject):
         pNo = self.get(index, "number")
         self._filterTable.loc[pNo, "manual"] = int(reject)
@@ -251,14 +251,14 @@ class Backend(QtCore.QObject):
 
     figureCanvas = gui.SimpleQtProperty(QtQuick.QQuickItem)
 
-    @QtCore.pyqtProperty(QtCore.QVariant, constant=True)
+    @QtCore.Property("QVariant", constant=True)
     def datasets(self):
         return self._datasets
 
     minTrackLength = gui.SimpleQtProperty(int)
     maxTrackLength = gui.SimpleQtProperty(int)
 
-    @QtCore.pyqtSlot(QtCore.QUrl)
+    @QtCore.Slot(QtCore.QUrl)
     def load(self, url):
         if isinstance(url, QtCore.QUrl):
             self._filePath = Path(url.toLocalFile())
@@ -339,8 +339,8 @@ class Backend(QtCore.QObject):
                 modelFileList.append(entry)
             ds.reset(modelFileList)
 
-    @QtCore.pyqtSlot()
-    @QtCore.pyqtSlot(bool)
+    @QtCore.Slot()
+    @QtCore.Slot(bool)
     def save(self, exportSpreadsheet=False):
         prefix, fileVer = self.prefixRe.match(self._filePath.name).groups()
         fileVer = int(fileVer)
@@ -395,7 +395,7 @@ class Backend(QtCore.QObject):
                 if ew:
                     ew.close()
 
-    @QtCore.pyqtSlot(QtCore.QVariant, result=int)
+    @QtCore.Slot("QVariant", result=int)
     def frameCount(self, fileData):
         try:
             return len(fileData.toVariant()["ddImg"])
@@ -403,19 +403,19 @@ class Backend(QtCore.QObject):
             # e.g. fileData is None, ddImg is None
             return 0
 
-    @QtCore.pyqtSlot(QtCore.QVariant, result=int)
+    @QtCore.Slot("QVariant", result=int)
     def firstFrame(self, t):
         if t is None:
             return 0
         return t["frame"].min()
 
-    @QtCore.pyqtSlot(QtCore.QVariant, result=int)
+    @QtCore.Slot("QVariant", result=int)
     def lastFrame(self, t):
         if t is None:
             return 0
         return t["frame"].max()
 
-    @QtCore.pyqtSlot(QtCore.QVariant, int, result=QtCore.QVariant)
+    @QtCore.Slot("QVariant", int, result="QVariant")
     def image(self, imageSeq, frameNo):
         if imageSeq is None:
             return None
@@ -427,8 +427,8 @@ class Backend(QtCore.QObject):
         fig.set_constrained_layout(True)
         self._ax = fig.subplots(1, 2)
 
-    @QtCore.pyqtSlot(QtCore.QVariant)
-    @QtCore.pyqtSlot(QtCore.QVariant, bool)
+    @QtCore.Slot("QVariant")
+    @QtCore.Slot("QVariant", bool)
     def plot(self, t, scatter=True):
         if t is None:
             return
