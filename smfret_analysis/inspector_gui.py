@@ -174,7 +174,9 @@ class ParticleList(gui.ListModel):
             return
 
         m = self._smData.groupby(("fret", "particle")).apply(
-            lambda x: int(not r[0] <= np.ptp(x["donor", "frame"]) <= r[1]))
+            lambda x: int(not r[0] <= np.ptp(x["donor", "frame"]) <= r[1]),
+            include_groups=False,
+        )
         self._filterTable["track_len"] = m
         self._updateFiltered()
         self._trackLengthRange = r
@@ -335,7 +337,8 @@ class Backend(QtCore.QObject):
                     if ("filter", c) not in pTrc.columns:
                         continue
                     ft[c] = pTrc.groupby(("fret", "particle")).apply(
-                        lambda x: x["filter", c].iloc[0])
+                        lambda x: x["filter", c].iloc[0], include_groups=False
+                    )
                 pList.filterTable = ft
                 entry["particles"] = pList
                 modelFileList.append(entry)
