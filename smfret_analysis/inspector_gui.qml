@@ -2,13 +2,13 @@
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
-import QtQuick 2.12
-import QtQuick.Controls 2.12
-import QtQuick.Dialogs 1.3 as QQDialogs
-import QtQuick.Layouts 1.12
-import Qt.labs.settings 1.0
-import SdtGui 0.1 as Sdt
-import FRETInspector 1.0
+import QtCore
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Dialogs as QQDialogs
+import QtQuick.Layouts
+import SdtGui as Sdt
+import FRETInspector
 
 
 ApplicationWindow {
@@ -31,14 +31,14 @@ ApplicationWindow {
                 ToolButton {
                     icon.name: "document-open"
                     onClicked: {
-                        saveFileDialog.selectExisting = true
+                        saveFileDialog.fileMode = QQDialogs.FileDialog.OpenFile
                         saveFileDialog.open()
                     }
                 }
                 ToolButton {
                     icon.name: "document-save"
                     onClicked: {
-                        // saveFileDialog.selectExisting = false
+                        // saveFileDialog.fileMode = QQDialogs.FileDialog.SaveFile
                         // saveFileDialog.open()
                         backend.save(false)
                     }

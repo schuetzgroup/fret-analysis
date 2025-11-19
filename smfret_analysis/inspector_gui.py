@@ -18,7 +18,7 @@ from sdt import fret, gui, io, multicolor
 from .data_store import DataStore
 
 
-class Dataset(gui.Dataset):
+class InspectDataset(gui.Dataset):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._channels = {}
@@ -73,13 +73,14 @@ class Dataset(gui.Dataset):
             return seq
         return super().get(index, role)
 
+    @QtCore.Slot()
     def _imageDataChanged(self):
         self.dataChanged.emit(self.index(0), self.index(self.count - 1),
                               [self.Roles.ddImg, self.Roles.daImg])
 
 
-class DatasetCollection(gui.DatasetCollection):
-    DatasetClass = Dataset
+class InspectDatasetCollection(gui.DatasetCollection):
+    DatasetType = InspectDataset
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -101,7 +102,7 @@ class DatasetCollection(gui.DatasetCollection):
 
 class ParticleList(gui.ListModel):
     class Roles(enum.IntEnum):
-        number = QtCore.Qt.UserRole
+        number = QtCore.Qt.ItemDataRole.UserRole
         display = enum.auto()
         smData = enum.auto()
         dTrackData = enum.auto()
@@ -209,6 +210,7 @@ class ParticleList(gui.ListModel):
         self._filterTable.loc[pNo, "manual"] = int(reject)
         self._updateFiltered()
 
+    @QtCore.Slot()
     def _updateFiltered(self):
         mask = self._filterTable["track_len"] == 0
         if not self._showManuallyFiltered:
@@ -241,7 +243,7 @@ class Backend(QtCore.QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        self._datasets = DatasetCollection()
+        self._datasets = InspectDatasetCollection()
         self._figureCanvas = None
         self._filePath = None
         self._minTrackLength = 0
