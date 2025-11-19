@@ -502,7 +502,7 @@ class Backend(QtCore.QObject):
 QtQml.qmlRegisterType(Backend, "FRETInspector", 1, 0, "Backend")
 
 
-if __name__ == "__main__":
+def main():
     app = QtWidgets.QApplication(sys.argv)
     app.setOrganizationName("schuetzgroup")
     app.setOrganizationDomain("biophysics.iap.tuwien.ac.at")
@@ -510,16 +510,22 @@ if __name__ == "__main__":
     app.setApplicationVersion("0.1")
 
     argp = argparse.ArgumentParser(
-        description="Inspect and manually filter smFRET traces")
+        description="Inspect and manually filter smFRET traces"
+    )
     argp.add_argument("tracks", help="Tracking yaml file", nargs="?")
     args = argp.parse_args()
 
     # gui.mpl_use_qt_font()
 
     comp = gui.Component(Path(__file__).absolute().with_suffix(".qml"))
+    comp.create()
     if comp.status_ == gui.Component.Status.Error:
         sys.exit(1)
     if args.tracks is not None:
         comp.backend.load(args.tracks)
 
-    sys.exit(app.exec_())
+    return app.exec()
+
+
+if __name__ == "__main__":
+    sys.exit(main())
