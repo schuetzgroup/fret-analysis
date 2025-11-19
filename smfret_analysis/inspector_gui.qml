@@ -413,13 +413,12 @@ ApplicationWindow {
     }
     QQDialogs.FileDialog {
         id: saveFileDialog
-        selectMultiple: false
         nameFilters: ["YAML savefile (*.yaml)", "All files (*)"]
         onAccepted: {
-            if (selectExisting)
-                backend.load(fileUrl)
+            if (fileMode == QQDialogs.FileDialog.SaveFile)
+                backend.save(selectedFile)
             else
-                backend.save(fileUrl)
+                backend.load(selectedFile)
         }
     }
     Component.onCompleted: {
