@@ -9,7 +9,7 @@ SPDX-License-Identifier: CC-BY-4.0
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.4604566.svg)](https://doi.org/10.5281/zenodo.4604566)
 
 This repository contains a Python package and several Jupyter notebooks to analyze single molecule FRET data.
-The procedure is discribed in our article published in the [Journal of Visualized Experiments](https://doi.org/10.3791/63124).
+The procedure is described in our article published in the [Journal of Visualized Experiments](https://doi.org/10.3791/63124).
 The [supplemental information](https://www.jove.com/files/ftp_upload/63124/si.pdf) contains screen shots with step-by-step instructions.
 Note that over time, some function names may have changed slightly, but with the current notebooks from this repository it should still be easily possible to follow the manual.
 

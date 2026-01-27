@@ -42,7 +42,7 @@ class Analyzer:
     """Map of dataset name (see :py:meth:`add_dataset`) -> file id -> source
     image file name(s). This is for special purpose datasets. Allowed keys:
     - ``"registration"`` (fiducial markers for image registration)
-    - ``"donor-profile"``, ``"acceptor-profile"`` (densly labeled samples for
+    - ``"donor-profile"``, ``"acceptor-profile"`` (densely labeled samples for
         determination of excitation intensity profiles)
     - ``"donor-only"``, ``"acceptor-only"`` (samples for determination of
         leakage and direct excitation correction factors, respectively)
@@ -339,7 +339,7 @@ class Analyzer:
             emission channel.
         stats
             Statistics to calculate for each track segment. For each entry
-            ``s``, a column named ``"{chan}_seg_{s}"`` is appendend, where
+            ``s``, a column named ``"{chan}_seg_{s}"`` is appended, where
             ``chan`` is ``d`` for donor and ``a`` for acceptor.
             ``s`` can be the name of a numpy function or a callable returning
             a statistic, such as :py:func:`numpy.mean`.

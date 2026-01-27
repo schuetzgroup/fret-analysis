@@ -190,7 +190,7 @@ class Tracker:
     """Map of dataset name (see :py:meth:`add_dataset`) -> file id -> source
     image file name(s). This is for special purpose datasets. Allowed keys:
     - ``"registration"`` (fiducial markers for image registration)
-    - ``"donor-profile"``, ``"acceptor-profile"`` (densly labeled samples for
+    - ``"donor-profile"``, ``"acceptor-profile"`` (densely labeled samples for
         determination of excitation intensity profiles)
     - ``"donor-only"``, ``"acceptor-only"`` (samples for determination of
         leakage and direct excitation correction factors, respectively)
@@ -286,7 +286,7 @@ class Tracker:
         Parameters
         ----------
         files_re
-            Regular expression describing some examplary image file names.
+            Regular expression describing some exemplary image file names.
             Names should be relative to :py:attr:`data_dir`. Use forward
             slashes as path separators.
         """
