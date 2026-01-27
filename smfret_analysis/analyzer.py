@@ -42,7 +42,7 @@ class Analyzer:
     """Map of dataset name (see :py:meth:`add_dataset`) -> file id -> source
     image file name(s). This is for special purpose datasets. Allowed keys:
     - ``"registration"`` (fiducial markers for image registration)
-    - ``"donor-profile"``, ``"acceptor-profile"`` (densly labeled samples for
+    - ``"donor-profile"``, ``"acceptor-profile"`` (densely labeled samples for
         determination of excitation intensity profiles)
     - ``"donor-only"``, ``"acceptor-only"`` (samples for determination of
         leakage and direct excitation correction factors, respectively)
@@ -339,7 +339,7 @@ class Analyzer:
             emission channel.
         stats
             Statistics to calculate for each track segment. For each entry
-            ``s``, a column named ``"{chan}_seg_{s}"`` is appendend, where
+            ``s``, a column named ``"{chan}_seg_{s}"`` is appended, where
             ``chan`` is ``d`` for donor and ``a`` for acceptor.
             ``s`` can be the name of a numpy function or a callable returning
             a statistic, such as :py:func:`numpy.mean`.
@@ -599,7 +599,7 @@ class Analyzer:
                                       Literal["individual"]] = np.nanmedian,
                            aggregate: Literal["dataset", "all"] = "dataset",
                            dataset: Optional[str] = None):
-        r"""Calculate detection efficieny correction factor
+        r"""Calculate detection efficiency correction factor
 
         The detection efficiency ratio is the ratio of decrease in acceptor
         brightness to the increase in donor brightness upon acceptor
@@ -727,7 +727,7 @@ class Analyzer:
 
     def calc_excitation_eff(self, dataset: str, n_components: int = 1,
                             component: int = 0):
-        """Calculate excitation efficieny correction factor
+        """Calculate excitation efficiency correction factor
 
         Utilize data with known 1:1 stoichiometry to this end. To find the
         right parameters for this call, use
