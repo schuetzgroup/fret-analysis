@@ -42,6 +42,7 @@ If you use this software in a project resulting in a scientific publication, ple
   ```
 
 - Start Jupyter Lab,
+
   ```
   uv run --with jupyter jupyter lab
   ```
@@ -49,3 +50,24 @@ If you use this software in a project resulting in a scientific publication, ple
 - Open `01. Tracking` notebook. Run each cell and adjust file paths and parameters as needed.
 - When finished, do the same using the `02. Filter` notebook.
 - Summary plots can be created with the `03. Plots` notebook.
+
+
+## Application for inspection of smFRET traces
+
+- Install the FRET analysis package with GUI dependencies from PyPI,
+
+  ```
+  uv add 'fret-analysis[gui]'
+  ```
+
+  or from Github,
+
+  ```
+  uv add 'git+https://github.com/schuetzgroup/fret-analysis.git[gui]'
+  ```
+
+- Run the application,
+
+  ```
+  uv run smfret-inspector
+  ```
