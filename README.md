@@ -54,16 +54,10 @@ If you use this software in a project resulting in a scientific publication, ple
 
 ## Application for inspection of smFRET traces
 
-- Install the FRET analysis package with GUI dependencies from PyPI,
+- Install the GUI dependencies,
 
   ```
   uv add 'fret-analysis[gui]'
-  ```
-
-  or from Github,
-
-  ```
-  uv add 'git+https://github.com/schuetzgroup/fret-analysis.git[gui]'
   ```
 
 - Run the application,
